@@ -73,9 +73,9 @@ namespace PatientZero
 
         private static readonly Dictionary<EnemyType, string> ModelPaths = new()
         {
-            { EnemyType.Standard, "res://assets/models/zombie_standard.glb" },
-            { EnemyType.Fast, "res://assets/models/zombie_runner.glb" },
-            { EnemyType.Tanky, "res://assets/models/zombie_brute.glb" },
+            { EnemyType.Standard, "res://assets/custom/patient_zero.glb" },
+            { EnemyType.Fast, "res://assets/custom/patient_zero.glb" },
+            { EnemyType.Tanky, "res://assets/custom/patient_zero.glb" },
             { EnemyType.Boss, "res://assets/custom/patient_zero.glb" },
         };
         private static readonly Dictionary<EnemyType, float> ModelScale = new()
@@ -796,10 +796,10 @@ namespace PatientZero
             }
             float targetH = type switch
             {
-                EnemyType.Fast => 1.55f,
-                EnemyType.Tanky => 2.15f,
+                EnemyType.Fast => 1.6f,
+                EnemyType.Tanky => 2.3f,
                 EnemyType.Boss => 2.7f,
-                _ => 1.75f,
+                _ => 1.85f,
             };
             AnimationPlayer? ap = null;
             if (scene != null)
@@ -808,8 +808,7 @@ namespace PatientZero
                 node.Scale = Vector3.One * ModelScale[type] * 0.05f; // spawn scale-in
                 ap = FindAnim(node);
                 if (ap != null) PlayAnim(ap, "Walk", type == EnemyType.Fast ? 1.5f : 1f);
-                if (type != EnemyType.Boss)
-                    TintModel(node, Config.EnemyTint(_theme, type), type == EnemyType.Tanky ? 0.4f : 0.22f);
+                // villain model keeps its original dark materials — no theme tint
             }
             else
             {
