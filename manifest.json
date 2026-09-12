@@ -1,0 +1,17 @@
+{
+  "name": "PATIENT ZERO: PROTOCOL",
+  "short_name": "PATIENT ZERO",
+  "description": "A zombie shooter where the villain is a live AI that profiles YOU.",
+  "start_url": "/PATIENT-ZERO/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#050607",
+  "theme_color": "#050607",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='18' fill='%23050607'/><text x='50' y='68' font-size='52' text-anchor='middle'>🧟</text></svg>",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}
