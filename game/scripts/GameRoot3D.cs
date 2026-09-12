@@ -29,6 +29,7 @@ namespace PatientZero
         private bool _screenshotMode;
         private float _shotAt = -1f;
         private bool _forceBoss;
+        private bool _menuShotMode;
 
         // ---------- sim entities ----------
         private readonly Player _player = new();
@@ -134,7 +135,7 @@ namespace PatientZero
         private readonly Dictionary<int, Node3D> _enemyNodes = new();
         private readonly Dictionary<int, AnimationPlayer?> _enemyAnims = new();
         private readonly Dictionary<int, RigData?> _enemyRigs = new();
-        private readonly List<(MeshInstance3D node, Projectile sim)> _bulletNodes = new();
+        private readonly List<(Node3D node, Projectile sim)> _bulletNodes = new();
 
         private static readonly Dictionary<EnemyType, string> ModelPaths = new()
         {
@@ -172,6 +173,61 @@ namespace PatientZero
         private Label _ammoLabel = null!;
         private bool _autoFire;
         private Tween? _kickTween;
+
+        // ---------- blood + flame fx ----------
+        private readonly Dictionary<int, (List<StandardMaterial3D> mats, List<Color> orig)> _bloodMats = new();
+        private readonly List<MeshInstance3D> _decals = new();
+        private static readonly Color BloodRed = new(0.55f, 0.05f, 0.08f);
+
+        private void BloodDecal(Vector2 pos, float scale = 1f)
+        {
+            var m = new StandardMaterial3D
+            {
+                AlbedoColor = new Color(0.32f, 0.03f, 0.05f, 0.8f),
+                Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+            };
+            var d = new MeshInstance3D
+            {
+                Mesh = new CylinderMesh { TopRadius = 0.3f * scale, BottomRadius = 0.36f * scale, Height = 0.012f },
+                MaterialOverride = m,
+                Position = new Vector3(pos.X, 0.015f, pos.Y),
+            };
+            _fxRoot.AddChild(d);
+            _decals.Add(d);
+            if (_decals.Count > 24) { var old = _decals[0]; _decals.RemoveAt(0); if (IsInstanceValid(old)) old.QueueFree(); }
+            var tw = CreateTween();
+            tw.TweenInterval(4f);
+            tw.TweenProperty(m, "albedo_color:a", 0f, 2.5f);
+            tw.TweenCallback(Callable.From(() => { if (IsInstanceValid(d)) { _decals.Remove(d); d.QueueFree(); } }));
+        }
+
+        private void CollectBloodMats(int id, Node node)
+        {
+            var mats = new List<StandardMaterial3D>();
+            var origs = new List<Color>();
+            void Walk(Node n)
+            {
+                if (n is MeshInstance3D mi && mi.Mesh != null)
+                {
+                    int sc = mi.Mesh.GetSurfaceCount();
+                    for (int i = 0; i < sc; i++)
+                    {
+                        var m = mi.GetActiveMaterial(i) as StandardMaterial3D;
+                        if (m != null)
+                        {
+                            var dup = (StandardMaterial3D)m.Duplicate();
+                            mi.SetSurfaceOverrideMaterial(i, dup);
+                            mats.Add(dup);
+                            origs.Add(dup.AlbedoColor);
+                        }
+                    }
+                }
+                foreach (var c in n.GetChildren()) Walk(c);
+            }
+            Walk(node);
+            if (mats.Count > 0) _bloodMats[id] = (mats, origs);
+        }
 
         // ---------- UI polish + virtual joysticks ----------
         private TextureRect _joyBaseL = null!, _joyKnobL = null!, _joyBaseR = null!, _joyKnobR = null!;
@@ -323,6 +379,8 @@ namespace PatientZero
                     Config.GeminiApiKey = arg.Substring(6).Trim();
                 if (arg == "--screenshot")
                     _screenshotMode = true;
+                if (arg == "--menushot")
+                    _menuShotMode = true;
                 if (arg == "--forceboss")
                     _forceBoss = true;
                 if (arg.StartsWith("--cam="))
@@ -348,6 +406,10 @@ namespace PatientZero
             {
                 StartRun();
                 _shotAt = 4.0f;
+            }
+            else if (_menuShotMode)
+            {
+                _shotAt = 1.6f;
             }
         }
 
@@ -1114,6 +1176,8 @@ namespace PatientZero
             _enemies.Clear(); _projectiles.Clear(); _particles.Clear(); _spawnQueue.Clear();
             foreach (var kv in _boltNodes) kv.Value.QueueFree();
             _boltNodes.Clear(); _bolts.Clear();
+            foreach (var d in _decals) if (IsInstanceValid(d)) d.QueueFree();
+            _decals.Clear(); _bloodMats.Clear();
             foreach (var b in _bulletNodes) b.node.QueueFree();
             _bulletNodes.Clear();
             _player.Pos = new Vector2(0, 6);
@@ -1257,6 +1321,7 @@ namespace PatientZero
             _enemyNodes[e.Id] = node;
             _enemyAnims[e.Id] = ap;
             _enemyRigs[e.Id] = FindRig(node);
+            CollectBloodMats(e.Id, node);
         }
 
         private static void TintModel(Node root, Color tint, float amount)
@@ -1296,7 +1361,9 @@ namespace PatientZero
                 AnimationPlayer? ap = _enemyAnims.GetValueOrDefault(e.Id);
                 _enemyAnims.Remove(e.Id);
                 _enemyRigs.Remove(e.Id);
-                SpawnBurst(node.Position, Config.EnemyTint(_theme, e.Type), e.Type == EnemyType.Boss ? 60 : 26, e.Type == EnemyType.Boss ? 9f : 6f);
+                SpawnBurst(node.Position, BloodRed, e.Type == EnemyType.Boss ? 70 : 30, e.Type == EnemyType.Boss ? 9f : 6.5f);
+                BloodDecal(e.Pos, e.Type == EnemyType.Boss ? 2.4f : 1.2f);
+                _bloodMats.Remove(e.Id);
                 if (e.Type == EnemyType.Boss)
                 {
                     ShowTaunt("A temporary avatar. I remain.", "» avatar destroyed — core intelligence unaffected");
@@ -1374,14 +1441,36 @@ namespace PatientZero
                     Emission = w.BulletColor,
                     EmissionEnergyMultiplier = 3.2f,
                 };
-                var node = new MeshInstance3D
+                // flame bolt: stretched emissive core + fire trail + light
+                var boltNode = new Node3D { Position = new Vector3(proj.Pos.X, 0.95f, proj.Pos.Y) };
+                boltNode.LookAt(boltNode.Position + new Vector3(d.X, 0, d.Y), Vector3.Up);
+                var core = new MeshInstance3D
                 {
-                    Mesh = new SphereMesh { Radius = w.Pellets > 1 ? 0.09f : 0.11f, Height = 0.22f },
+                    Mesh = new SphereMesh { Radius = w.Pellets > 1 ? 0.09f : 0.12f, Height = 0.24f },
                     MaterialOverride = mat,
-                    Position = new Vector3(proj.Pos.X, 0.95f, proj.Pos.Y),
+                    Scale = new Vector3(1f, 1f, 2.4f),
                 };
-                _fxRoot.AddChild(node);
-                _bulletNodes.Add((node, proj));
+                boltNode.AddChild(core);
+                var flame = new CpuParticles3D
+                {
+                    Emitting = true,
+                    Amount = 14,
+                    Lifetime = 0.22f,
+                    LocalCoords = false,
+                    Spread = 22f,
+                    InitialVelocityMin = 0.3f,
+                    InitialVelocityMax = 1.2f,
+                    Gravity = new Vector3(0, 1.6f, 0),
+                    ScaleAmountMin = 0.06f,
+                    ScaleAmountMax = 0.18f,
+                    Color = new Color(w.BulletColor.R, w.BulletColor.G, w.BulletColor.B, 0.85f),
+                    Mesh = new SphereMesh { Radius = 0.07f, Height = 0.14f },
+                };
+                boltNode.AddChild(flame);
+                var blight = new OmniLight3D { LightColor = w.BulletColor, LightEnergy = 1.3f, OmniRange = 4f };
+                boltNode.AddChild(blight);
+                _fxRoot.AddChild(boltNode);
+                _bulletNodes.Add((boltNode, proj));
             }
             PlaySfx(w.Sound);
             _muzzleLight.LightEnergy = 2.4f;
@@ -1410,6 +1499,8 @@ namespace PatientZero
                 {
                     e.Hp -= Config.MeleeDmg;
                     e.Flash = 1;
+                    SpawnBurst(new Vector3(e.Pos.X, 1.0f, e.Pos.Y), BloodRed, 12, 4.5f);
+                    BloodDecal(e.Pos, 0.8f);
                     hit = true;
                     if (e.Hp <= 0) KillEnemy(e, "melee");
                 }
@@ -1438,6 +1529,8 @@ namespace PatientZero
                 {
                     e.Hp -= Config.PurgeDmg;
                     e.Flash = 1;
+                    SpawnBurst(new Vector3(e.Pos.X, 1.0f, e.Pos.Y), BloodRed, 16, 6f);
+                    BloodDecal(e.Pos, 1.1f);
                     if (e.Hp <= 0) KillEnemy(e, "ranged");
                 }
             }
@@ -1919,8 +2012,8 @@ namespace PatientZero
                             e.Hp -= b.Damage;
                             e.Flash = 1;
                             b.Dead = true;
-                            if (_enemyNodes.TryGetValue(e.Id, out var hitNode))
-                                SpawnBurst(hitNode.Position, new Color("#ffffff"), 4, 3f);
+                            SpawnBurst(new Vector3(b.Pos.X, 1.0f, b.Pos.Y), BloodRed, 14, 5f);
+                            BloodDecal(e.Pos, 0.7f);
                             if (e.Hp <= 0) KillEnemy(e, "ranged");
                             break;
                         }
@@ -2018,6 +2111,12 @@ namespace PatientZero
                     float cadence = e.Type == EnemyType.Fast ? 10.5f : e.Type == EnemyType.Boss ? 4.5f : 6.5f;
                     PoseWalk(rig, _time * cadence + e.Id * 1.3f, (0.15f + 0.5f * speedK) * (e.Type == EnemyType.Boss ? 0.8f : 1f));
                 }
+                if (_bloodMats.TryGetValue(e.Id, out var bm))
+                {
+                    float k = Mathf.Clamp(e.Flash * 1.4f, 0f, 1f);
+                    for (int mi = 0; mi < bm.mats.Count; mi++)
+                        bm.mats[mi].AlbedoColor = bm.orig[mi].Lerp(BloodRed, k);
+                }
                 float baseScale = ModelScale.GetValueOrDefault(e.Type, 1f);
                 float s = e.SpawnT > 0 ? baseScale * Mathf.Max(0.05f, 1f - e.SpawnT / 0.55f) : baseScale;
                 if (e.Flash > 0.3f) s *= 1.12f;
@@ -2039,7 +2138,7 @@ namespace PatientZero
                 if (!kv.Key.Dead)
                     kv.Value.Position = new Vector3(kv.Key.Pos.X, 1.1f + Mathf.Sin(_time * 6f) * 0.08f, kv.Key.Pos.Y);
 
-            // bullets
+            // bullets (flame flicker)
             for (int i = _bulletNodes.Count - 1; i >= 0; i--)
             {
                 var (node, sim) = _bulletNodes[i];
@@ -2049,7 +2148,9 @@ namespace PatientZero
                     _bulletNodes.RemoveAt(i);
                     continue;
                 }
-                node.Position = new Vector3(sim.Pos.X, 0.9f, sim.Pos.Y);
+                node.Position = new Vector3(sim.Pos.X, 0.95f, sim.Pos.Y);
+                float fl = 1f + 0.14f * Mathf.Sin(_time * 31f + i * 2.1f);
+                node.Scale = new Vector3(fl, fl, 1f + 0.2f * Mathf.Sin(_time * 26f + i));
             }
 
             // particles (sim-driven fallback bursts use CpuParticles; sim list only for compat)
