@@ -3,7 +3,7 @@ using System.Collections.Generic;
 
 namespace PatientZero
 {
-    public enum EnemyType { Standard, Fast, Tanky }
+    public enum EnemyType { Standard, Fast, Tanky, Boss }
 
     public enum ZoneName
     {
@@ -82,6 +82,7 @@ namespace PatientZero
             { EnemyType.Standard, (100f, 3.0f, 10f, 0.85f, 10) },
             { EnemyType.Fast, (50f, 6.1f, 5f, 0.65f, 15) },
             { EnemyType.Tanky, (250f, 1.6f, 20f, 1.15f, 25) },
+            { EnemyType.Boss, (1800f, 2.1f, 35f, 1.5f, 500) },
         };
 
         public const float EnemyAttackRange = 1.7f;

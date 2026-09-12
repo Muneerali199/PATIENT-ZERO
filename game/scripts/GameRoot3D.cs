@@ -28,6 +28,7 @@ namespace PatientZero
         private string _seedLabel = "";
         private bool _screenshotMode;
         private float _shotAt = -1f;
+        private bool _forceBoss;
 
         // ---------- sim entities ----------
         private readonly Player _player = new();
@@ -74,12 +75,14 @@ namespace PatientZero
             { EnemyType.Standard, "res://assets/models/zombie_standard.glb" },
             { EnemyType.Fast, "res://assets/models/zombie_runner.glb" },
             { EnemyType.Tanky, "res://assets/models/zombie_brute.glb" },
+            { EnemyType.Boss, "res://assets/custom/patient_zero.glb" },
         };
         private static readonly Dictionary<EnemyType, float> ModelScale = new()
         {
             { EnemyType.Standard, 1.0f },
             { EnemyType.Fast, 1.0f },
             { EnemyType.Tanky, 1.0f },
+            { EnemyType.Boss, 1.0f },
         };
         private readonly Dictionary<EnemyType, PackedScene?> _modelCache = new();
         private PackedScene? _pillarScene;
@@ -130,6 +133,8 @@ namespace PatientZero
                     Config.GeminiApiKey = arg.Substring(6).Trim();
                 if (arg == "--screenshot")
                     _screenshotMode = true;
+                if (arg == "--forceboss")
+                    _forceBoss = true;
                 if (arg.StartsWith("--cam="))
                     _camMode = arg.Substring(6).ToLowerInvariant() switch
                     {
@@ -707,6 +712,15 @@ namespace PatientZero
                     basePt + new Vector2((float)GD.RandRange(-1.5, 1.5), (float)GD.RandRange(-1.5, 1.5))));
             }
             _logger.Reset();
+
+            // PATIENT ZERO MANIFESTS — boss avatar every 5th wave
+            if (_forceBoss || n % 5 == 0)
+            {
+                float lastT = _spawnQueue.Count > 0 ? _spawnQueue[^1].at : _time;
+                _spawnQueue.Add((lastT + 1.2f, EnemyType.Boss, new Vector2(0, -10)));
+                _waveBanner.Text = $"WAVE {n:00} — IT MANIFESTS";
+                ShowTaunt("Enough. I will attend to this specimen personally.", "» PATIENT ZERO MANIFESTS — boss engagement");
+            }
         }
 
         private void EndWave()
@@ -754,6 +768,7 @@ namespace PatientZero
                 {
                     EnemyType.Fast => "zombie_runner",
                     EnemyType.Tanky => "zombie_brute",
+                    EnemyType.Boss => "patient_zero",
                     _ => "zombie_standard",
                 };
                 scene = LoadCharacter(ModelPaths[type], customName);
@@ -763,6 +778,7 @@ namespace PatientZero
             {
                 EnemyType.Fast => 1.55f,
                 EnemyType.Tanky => 2.15f,
+                EnemyType.Boss => 2.7f,
                 _ => 1.75f,
             };
             AnimationPlayer? ap = null;
@@ -772,7 +788,8 @@ namespace PatientZero
                 node.Scale = Vector3.One * ModelScale[type] * 0.05f; // spawn scale-in
                 ap = FindAnim(node);
                 if (ap != null) PlayAnim(ap, "Walk", type == EnemyType.Fast ? 1.5f : 1f);
-                TintModel(node, Config.EnemyTint(_theme, type), type == EnemyType.Tanky ? 0.4f : 0.22f);
+                if (type != EnemyType.Boss)
+                    TintModel(node, Config.EnemyTint(_theme, type), type == EnemyType.Tanky ? 0.4f : 0.22f);
             }
             else
             {
@@ -826,7 +843,12 @@ namespace PatientZero
                 _enemyNodes.Remove(e.Id);
                 AnimationPlayer? ap = _enemyAnims.GetValueOrDefault(e.Id);
                 _enemyAnims.Remove(e.Id);
-                SpawnBurst(node.Position, Config.EnemyTint(_theme, e.Type), 26, 6f);
+                SpawnBurst(node.Position, Config.EnemyTint(_theme, e.Type), e.Type == EnemyType.Boss ? 60 : 26, e.Type == EnemyType.Boss ? 9f : 6f);
+                if (e.Type == EnemyType.Boss)
+                {
+                    ShowTaunt("A temporary avatar. I remain.", "» avatar destroyed — core intelligence unaffected");
+                    _shake = 0.8f;
+                }
                 if (ap != null && HasAnim(ap, "Death"))
                 {
                     PlayAnim(ap, "Death", 1.1f);
