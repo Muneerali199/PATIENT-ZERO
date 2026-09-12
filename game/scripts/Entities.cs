@@ -20,6 +20,9 @@ namespace PatientZero
         public float Hp, MaxHp, Speed, Damage, Radius;
         public float AttackCd, Flash, SpawnT = 0.55f;
         public float CastCd;
+        public float LungeCd = 2.5f;
+        public float LungeT;
+        public Vector2 LungeDir;
         public bool Dead;
 
         public static Enemy Create(EnemyType t, Vector2 pos)

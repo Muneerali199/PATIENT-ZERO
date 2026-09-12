@@ -47,7 +47,22 @@ namespace PatientZero
         {
             var p = _player;
             var dir = (p.Pos - e.Pos).Normalized();
-            var bolt = new EnemyBolt { Pos = e.Pos + dir * 1.2f, Vel = dir * 11f };
+            SpawnBoltWithVisual(e.Pos + dir * 1.2f, dir * 11f);
+            // boss enraged: triple water spread under 50% integrity
+            if (e.Type == EnemyType.Boss && e.Hp < e.MaxHp * 0.5f)
+            {
+                foreach (float spread in new[] { -0.3f, 0.3f })
+                {
+                    var d2 = dir.Rotated(spread);
+                    SpawnBoltWithVisual(e.Pos + d2 * 1.2f, d2 * 11f);
+                }
+            }
+            PlaySfx("waterbolt");
+        }
+
+        private void SpawnBoltWithVisual(Vector2 pos, Vector2 vel)
+        {
+            var bolt = new EnemyBolt { Pos = pos, Vel = vel };
             _bolts.Add(bolt);
 
             var mat = new StandardMaterial3D
@@ -83,7 +98,6 @@ namespace PatientZero
             node.Position = new Vector3(bolt.Pos.X, 1.1f, bolt.Pos.Y);
             _fxRoot.AddChild(node);
             _boltNodes[bolt] = node;
-            PlaySfx("waterbolt");
         }
 
         private void KillBolt(EnemyBolt b, bool splash = true)
@@ -176,6 +190,11 @@ namespace PatientZero
 
         // ---------- blood + flame fx ----------
         private readonly Dictionary<int, (List<StandardMaterial3D> mats, List<Color> orig)> _bloodMats = new();
+        private bool _weaponBoneSpace;
+        private readonly List<(Control root, ColorRect fill)> _hpBars = new();
+        private Control _bossBar = null!;
+        private ColorRect _bossFill = null!;
+        private Label _hpNum = null!;
         private readonly List<MeshInstance3D> _decals = new();
         private static readonly Color BloodRed = new(0.55f, 0.05f, 0.08f);
 
@@ -640,6 +659,40 @@ namespace PatientZero
             knob.Position = s.o * k - knob.Size / 2 + d * 0.55f;
         }
 
+        private void UpdateEnemyBars()
+        {
+            float k = 1280f / GetViewport().GetVisibleRect().Size.X;
+            int bi = 0;
+            Enemy? boss = null;
+            if (_phase == Phase.Playing || _phase == Phase.Intermission)
+            {
+                foreach (var e in _enemies)
+                {
+                    if (e.Type == EnemyType.Boss) { if (!e.Dead) boss = e; continue; }
+                    if (bi >= _hpBars.Count) break;
+                    if (e.Dead || e.SpawnT > 0 || e.Hp >= e.MaxHp) continue;
+                    var head = new Vector3(e.Pos.X, 2.3f, e.Pos.Y);
+                    if (_cam.IsPositionBehind(head)) continue;
+                    var sp = _cam.UnprojectPosition(head) * k;
+                    var bar = _hpBars[bi];
+                    bar.root.Visible = true;
+                    bar.root.Position = sp - new Vector2(24, 0);
+                    float pct = Mathf.Clamp(e.Hp / e.MaxHp, 0f, 1f);
+                    bar.fill.Size = new Vector2(46 * pct, 5);
+                    bar.fill.Color = pct > 0.4f ? TermGreen : AlertRed;
+                    bi++;
+                }
+            }
+            for (; bi < _hpBars.Count; bi++) _hpBars[bi].root.Visible = false;
+
+            if (boss != null && _bossBar != null)
+            {
+                _bossBar.Visible = true;
+                _bossFill.Size = new Vector2(360f * Mathf.Clamp(boss.Hp / boss.MaxHp, 0f, 1f), 10);
+            }
+            else if (_bossBar != null) _bossBar.Visible = false;
+        }
+
         // ---- weapon system ----
         private void SwitchWeapon(int i)
         {
@@ -816,7 +869,16 @@ namespace PatientZero
                 _playerAnim = FindAnim(_playerNode);
                 _playerRig = FindRig(_playerNode);
 
-                // weapon slots — custom/weapon.glb overrides ALL slots if present
+                // weapon slots — mounted on the hand BONE so the grip stays in his fist
+                Node3D weaponParent = _playerNode;
+                var playerSkel = _playerNode.FindChildren("*", "Skeleton3D", true, false).OfType<Skeleton3D>().FirstOrDefault();
+                if (playerSkel != null && playerSkel.FindBone("forearm_r") >= 0)
+                {
+                    var ba = new BoneAttachment3D { BoneName = "forearm_r" };
+                    playerSkel.AddChild(ba);
+                    weaponParent = ba;
+                }
+                _weaponBoneSpace = weaponParent != _playerNode;
                 var customWeapon = LoadScene("res://assets/custom/weapon.glb");
                 for (int i = 0; i < Config.Weapons.Length; i++)
                 {
@@ -830,9 +892,18 @@ namespace PatientZero
                     }
                     if (wn != null)
                     {
-                        wn.Position = new Vector3(0.28f, 1.0f, 0.22f);
+                        if (_weaponBoneSpace)
+                        {
+                            wn.Position = new Vector3(0.02f, -0.16f, 0.05f);
+                            wn.RotationDegrees = new Vector3(-90f, 0f, 0f);
+                            wn.Scale = Vector3.One * 0.45f;
+                        }
+                        else
+                        {
+                            wn.Position = new Vector3(0.28f, 1.0f, 0.22f);
+                        }
                         wn.Visible = i == _weaponIdx;
-                        _playerNode.AddChild(wn);
+                        weaponParent.AddChild(wn);
                     }
                     _weaponNodes.Add(wn);
                 }
@@ -1030,6 +1101,33 @@ namespace PatientZero
             }
             Backdrop(12, 12, 324, 104);   // vitals + weapons
             Backdrop(1008, 12, 260, 108); // score + badge + ammo
+
+            // enemy hp bar pool + boss bar + player hp number
+            for (int i = 0; i < 32; i++)
+            {
+                var barRoot = new Control { Visible = false, MouseFilter = Control.MouseFilterEnum.Ignore, Size = new Vector2(48, 7) };
+                var bgc = new ColorRect { Color = new Color(0, 0, 0, 0.62f), Size = new Vector2(48, 7) };
+                var fill = new ColorRect { Color = TermGreen, Position = new Vector2(1, 1), Size = new Vector2(46, 5) };
+                barRoot.AddChild(bgc); barRoot.AddChild(fill);
+                _ui.AddChild(barRoot);
+                _hpBars.Add((barRoot, fill));
+            }
+            _bossBar = new PanelContainer { Position = new Vector2(340, 100), Size = new Vector2(600, 30), Visible = false, MouseFilter = Control.MouseFilterEnum.Ignore };
+            _bossBar.AddThemeStyleboxOverride("panel", PanelStyle(new Color(0.05f, 0.01f, 0.02f, 0.75f), new Color(1f, 0.3f, 0.37f, 0.6f)));
+            var bossRow = new HBoxContainer();
+            var bossLbl = new Label { Text = "▚ PATIENT ZERO // AVATAR INTEGRITY  " };
+            bossLbl.AddThemeFontSizeOverride("font_size", 12);
+            bossLbl.AddThemeColorOverride("font_color", AlertRed);
+            bossRow.AddChild(bossLbl);
+            var bossBg = new ColorRect { Color = new Color(0, 0, 0, 0.6f), CustomMinimumSize = new Vector2(360, 10) };
+            _bossFill = new ColorRect { Color = AlertRed, Size = new Vector2(360, 10) };
+            var bossWrap = new Control { CustomMinimumSize = new Vector2(360, 10) };
+            bossWrap.AddChild(bossBg);
+            bossBg.AddChild(_bossFill);
+            bossRow.AddChild(bossWrap);
+            _bossBar.AddChild(bossRow);
+            _ui.AddChild(_bossBar);
+            _hpNum = MkLabel(UIR(), "100 / 100", new Vector2(24, 46), new Vector2(200, 18), 12, TermDim);
 
             // virtual joysticks (mobile)
             _ringTex = MakeRingTex(140, 0.36f, 0.5f, new Color(0.62f, 0.94f, 0.7f, 0.4f));
@@ -1273,6 +1371,13 @@ namespace PatientZero
         private void SpawnEnemy(EnemyType type, Vector2 pos)
         {
             var e = Enemy.Create(type, pos);
+            // wave power scaling — Patient Zero's army hardens as you survive
+            float hpMul = 1f + 0.09f * (_wave - 1);
+            float dmgMul = 1f + 0.05f * (_wave - 1);
+            float spdMul = Mathf.Min(1f + 0.025f * (_wave - 1), 1.4f);
+            e.Hp *= hpMul; e.MaxHp = e.Hp;
+            e.Damage *= dmgMul;
+            e.Speed *= spdMul;
             e.Id = _nextEnemyId++;
             _enemies.Add(e);
 
@@ -1480,10 +1585,12 @@ namespace PatientZero
             var wn = _weaponNodes.Count > _weaponIdx ? _weaponNodes[_weaponIdx] : null;
             if (wn != null)
             {
-                wn.Position = new Vector3(0.28f, 1.0f, 0.13f);
+                var restPos = _weaponBoneSpace ? new Vector3(0.02f, -0.16f, 0.05f) : new Vector3(0.28f, 1.0f, 0.22f);
+                var kickPos = _weaponBoneSpace ? new Vector3(0.02f, -0.11f, 0.05f) : new Vector3(0.28f, 1.0f, 0.13f);
+                wn.Position = kickPos;
                 _kickTween?.Kill();
                 _kickTween = CreateTween();
-                _kickTween.TweenProperty(wn, "position", new Vector3(0.28f, 1.0f, 0.22f), 0.09f);
+                _kickTween.TweenProperty(wn, "position", restPos, 0.09f);
             }
         }
 
@@ -1557,6 +1664,7 @@ namespace PatientZero
             float pct = Mathf.Clamp(_player.Hp / Config.PlayerMaxHp, 0f, 1f);
             _hpFill.Size = new Vector2(296 * pct, 12);
             _hpFill.Color = pct < 0.3f ? AlertRed : TermGreen;
+            if (_hpNum != null) _hpNum.Text = $"{Mathf.CeilToInt(Mathf.Max(0, _player.Hp))} / {(int)Config.PlayerMaxHp}";
         }
 
         private void OnPlayerDeath()
@@ -1799,6 +1907,8 @@ namespace PatientZero
                 _musicTween.TweenProperty(_bgmBoss, "volume_db", _bossMusicOn ? -8f : -80f, 1.4f);
             }
 
+            UpdateEnemyBars();
+
             // virtual joystick visuals (follow touches)
             if (_phase == Phase.Playing && _joyBaseL != null)
             {
@@ -1970,6 +2080,23 @@ namespace PatientZero
                     }
                     if (steer.LengthSquared() > 0.001f) steer = steer.Normalized();
                     e.Vel = steer * e.Speed;
+
+                    // fast reapers lunge — telegraphed dash
+                    if (e.Type == EnemyType.Fast)
+                    {
+                        e.LungeCd -= dt;
+                        if (e.LungeT > 0)
+                        {
+                            e.LungeT -= dt;
+                            e.Vel = e.LungeDir * (e.Speed * 3.1f);
+                        }
+                        else if (e.LungeCd <= 0 && dist > 3.2f && dist < 7.5f)
+                        {
+                            e.LungeCd = 2.8f;
+                            e.LungeT = 0.26f;
+                            e.LungeDir = dirV;
+                        }
+                    }
                     e.Pos += e.Vel * dt;
                     e.Pos.X = Mathf.Clamp(e.Pos.X, -Config.WorldW / 2 + e.Radius, Config.WorldW / 2 - e.Radius);
                     e.Pos.Y = Mathf.Clamp(e.Pos.Y, -Config.WorldH / 2 + e.Radius, Config.WorldH / 2 - e.Radius);
