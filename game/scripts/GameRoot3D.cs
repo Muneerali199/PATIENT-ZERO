@@ -52,6 +52,7 @@ namespace PatientZero
         private Node3D _enemyRoot = null!;
         private Node3D _fxRoot = null!;
         private Node3D _playerNode = null!;
+        private Node3D? _rifle;
         private AnimationPlayer? _playerAnim;
         private OmniLight3D _muzzleLight = null!;
         private MeshInstance3D _purgeRing = null!;
@@ -94,6 +95,8 @@ namespace PatientZero
         private Label _waveBanner = null!;
         private Control _crosshair = null!;
         private Button _camBtn = null!;
+        private Button _fireBtn = null!;
+        private bool _fireHeld;
         private Control _tauntPanel = null!;
         private ColorRect _hpFill = null!;
         private Button _purgeBtn = null!;
@@ -435,6 +438,16 @@ namespace PatientZero
             {
                 _playerNode = NormalizeModel(scene.Instantiate<Node3D>(), 1.8f);
                 _playerAnim = FindAnim(_playerNode);
+
+                // rifle in the hero's right hand
+                var rifleScene = LoadScene("res://assets/models/rifle.glb");
+                if (rifleScene != null)
+                {
+                    _rifle = rifleScene.Instantiate<Node3D>();
+                    _rifle.Position = new Vector3(0.28f, 0.95f, 0.22f);
+                    _rifle.RotationDegrees = new Vector3(0, 0, 0);
+                    _playerNode.AddChild(_rifle);
+                }
             }
             else
             {
@@ -552,6 +565,13 @@ namespace PatientZero
             _purgeBtn.AddThemeFontSizeOverride("font_size", 16);
             _purgeBtn.Pressed += () => { if (_phase == Phase.Playing) TryPurge(); };
             _ui.AddChild(_purgeBtn);
+
+            // FIRE button (hold to shoot — touch-friendly)
+            _fireBtn = new Button { Text = "🔥 FIRE", Position = new Vector2(1066, 476), Size = new Vector2(190, 100) };
+            _fireBtn.AddThemeFontSizeOverride("font_size", 22);
+            _fireBtn.ButtonDown += () => _fireHeld = true;
+            _fireBtn.ButtonUp += () => _fireHeld = false;
+            _ui.AddChild(_fireBtn);
 
             // Camera mode button
             var camBtn = new Button { Text = "CAM: TOP [C]", Position = new Vector2(24, 596), Size = new Vector2(180, 60) };
@@ -713,8 +733,8 @@ namespace PatientZero
             }
             _logger.Reset();
 
-            // PATIENT ZERO MANIFESTS — boss avatar every 5th wave
-            if (_forceBoss || n % 5 == 0)
+            // PATIENT ZERO MANIFESTS — boss avatar every 3rd wave
+            if (_forceBoss || n % 3 == 0)
             {
                 float lastT = _spawnQueue.Count > 0 ? _spawnQueue[^1].at : _time;
                 _spawnQueue.Add((lastT + 1.2f, EnemyType.Boss, new Vector2(0, -10)));
@@ -1135,9 +1155,9 @@ namespace PatientZero
                 bool aimTouch = false;
                 foreach (var t in _touches.Values) if (t.aim) aimTouch = true;
 
-                bool auto = !_mouseLookActive && !aimTouch;
+                bool auto = !_mouseLookActive && !aimTouch && !_fireHeld;
                 Enemy? best = null; float bd = float.MaxValue;
-                if (auto)
+                if (auto || _fireHeld)
                 {
                     foreach (var e in _enemies)
                     {
@@ -1145,14 +1165,14 @@ namespace PatientZero
                         float d = p.Pos.DistanceTo(e.Pos);
                         if (d < bd) { bd = d; best = e; }
                     }
-                    if (best != null)
+                    if (best != null && auto)
                     {
                         var dd = best.Pos - p.Pos;
                         _yaw = Mathf.Atan2(-dd.X, -dd.Y);
                     }
                 }
                 var aim = new Vector2(-Mathf.Sin(_yaw), -Mathf.Cos(_yaw));
-                bool firing = _mouseDown || aimTouch || (auto && best != null);
+                bool firing = _mouseDown || aimTouch || _fireHeld || (auto && best != null);
                 return (aim, firing);
             }
 
