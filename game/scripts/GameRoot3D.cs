@@ -24,12 +24,32 @@ namespace PatientZero
         private readonly BehaviorLogger _logger = new();
         private readonly List<BehaviorSummary> _history = new();
         private ThemeData _theme;
-        private ThemeBucket _bucket = ThemeBucket.Temperate;
+        private ThemeBucket _bucket = ThemeBucket.Jungle;
         private string _seedLabel = "";
         private bool _screenshotMode;
         private float _shotAt = -1f;
         private bool _forceBoss;
         private bool _menuShotMode;
+        private Godot.Environment _env = null!;
+        private MultiMeshInstance3D? _fireflies;
+        private Vector3[] _fireflyBase = System.Array.Empty<Vector3>();
+        private float[] _fireflyPhase = System.Array.Empty<float>();
+        private readonly List<(MeshInstance3D plane, float speed, float ybase)> _fogPlanes = new();
+        private ImageTexture? _fogTex;
+
+        private static ImageTexture MakeFogTex(int size = 128)
+        {
+            var img = Image.CreateEmpty(size, size, false, Image.Format.Rgba8);
+            var center = new Vector2(size / 2f, size / 2f);
+            for (int y = 0; y < size; y++)
+            for (int x = 0; x < size; x++)
+            {
+                float d = ((new Vector2(x, y) - center) / (size / 2f)).Length();
+                float a = Mathf.Clamp((0.95f - d) * 0.5f, 0f, 0.5f);
+                img.SetPixel(x, y, new Color(0.75f, 0.95f, 0.8f, a * a));
+            }
+            return ImageTexture.CreateFromImage(img);
+        }
 
         // ---------- sim entities ----------
         private readonly Player _player = new();
@@ -450,10 +470,11 @@ namespace PatientZero
                 GlowBloom = 0.1f,
                 FogEnabled = true,
                 FogLightColor = _theme.Fog with { A = 1f },
-                FogDensity = 0.018f,
+                FogDensity = _bucket == ThemeBucket.Jungle ? 0.038f : 0.018f,
                 SsaoEnabled = true,
                 SsaoRadius = 1.6f,
             };
+            _env = env;
             _worldEnv = new WorldEnvironment { Environment = env };
             AddChild(_worldEnv);
 
@@ -543,7 +564,7 @@ namespace PatientZero
             var floor = new MeshInstance3D
             {
                 Mesh = new PlaneMesh { Size = new Vector2(Config.WorldW + 6, Config.WorldH + 6) },
-                MaterialOverride = PbrMat(_theme.Floor.Lightened(0.55f), "brushed_concrete"),
+                MaterialOverride = PbrMat(_theme.Floor.Lightened(0.5f), _bucket == ThemeBucket.Jungle ? "forest_floor" : "brushed_concrete"),
             };
             AddChild(floor);
 
@@ -556,6 +577,8 @@ namespace PatientZero
                 Emission = _theme.Grid,
                 EmissionEnergyMultiplier = 0.7f,
             };
+            if (_bucket != ThemeBucket.Jungle)
+            {
             for (float gx = -Config.WorldW / 2; gx <= Config.WorldW / 2; gx += 4f)
             {
                 var line = new MeshInstance3D
@@ -575,6 +598,7 @@ namespace PatientZero
                     Position = new Vector3(0, 0.012f, gz),
                 };
                 AddChild(line);
+            }
             }
 
             // perimeter walls — weathered concrete PBR
@@ -640,6 +664,102 @@ namespace PatientZero
                     RotationDegrees = new Vector3(90f, 0f, 0f),
                 };
                 AddChild(ring);
+            }
+
+            if (_bucket == ThemeBucket.Jungle) BuildJungle();
+        }
+
+        private void BuildJungle()
+        {
+            var rng = new RandomNumberGenerator();
+            rng.Seed = 0xC0FFEE;
+
+            // ---- tree ring (MultiMesh = 2 draw calls for the whole jungle) ----
+            var trunkMat = Mat(new Color("#332217"), 0.95f, 0f);
+            var canopyMat = Mat(new Color("#16361c"), 1f, 0f);
+            var canopyMat2 = Mat(new Color("#1d4524"), 1f, 0f);
+
+            var positions = new List<(Vector3 pos, float s)>();
+            for (float x = -27f; x <= 27f; x += 3.8f)
+            {
+                positions.Add((new Vector3(x + rng.RandfRange(-1.3f, 1.3f), 0, -Config.WorldH / 2 - 2.6f - rng.RandfRange(0, 3.5f)), rng.RandfRange(0.85f, 1.6f)));
+                positions.Add((new Vector3(x + rng.RandfRange(-1.3f, 1.3f), 0, Config.WorldH / 2 + 2.6f + rng.RandfRange(0, 3.5f)), rng.RandfRange(0.85f, 1.6f)));
+            }
+            for (float z = -17f; z <= 17f; z += 4.4f)
+            {
+                positions.Add((new Vector3(-Config.WorldW / 2 - 2.6f - rng.RandfRange(0, 3.5f), 0, z + rng.RandfRange(-1.2f, 1.2f)), rng.RandfRange(0.9f, 1.7f)));
+                positions.Add((new Vector3(Config.WorldW / 2 + 2.6f + rng.RandfRange(0, 3.5f), 0, z + rng.RandfRange(-1.2f, 1.2f)), rng.RandfRange(0.9f, 1.7f)));
+            }
+
+            var trunkMM = new MultiMesh { Mesh = new CylinderMesh { TopRadius = 0.13f, BottomRadius = 0.2f, Height = 3f }, TransformFormat = MultiMesh.TransformFormatEnum.Transform3D, InstanceCount = positions.Count };
+            var canopyMM = new MultiMesh { Mesh = new SphereMesh { Radius = 1f, Height = 1.6f, RadialSegments = 10, Rings = 6 }, TransformFormat = MultiMesh.TransformFormatEnum.Transform3D, InstanceCount = positions.Count * 3 };
+
+            int ci = 0;
+            for (int i = 0; i < positions.Count; i++)
+            {
+                var (pos, s) = positions[i];
+                trunkMM.SetInstanceTransform(i, new Transform3D(Basis.Identity.Scaled(new Vector3(s, s, s)), new Vector3(pos.X, 1.5f * s, pos.Z)));
+                for (int b = 0; b < 3; b++)
+                {
+                    var off = b == 0 ? new Vector3(0, 3.1f, 0) : b == 1 ? new Vector3(0.7f, 2.5f, 0.2f) : new Vector3(-0.6f, 2.6f, -0.3f);
+                    var bs = (b == 0 ? 1.5f : 1.0f) * s;
+                    canopyMM.SetInstanceTransform(ci++, new Transform3D(Basis.Identity.Scaled(new Vector3(bs, bs * 0.8f, bs)), pos + off * s));
+                }
+            }
+            var trunks = new MultiMeshInstance3D { Multimesh = trunkMM, MaterialOverride = trunkMat };
+            var canopies = new MultiMeshInstance3D { Multimesh = canopyMM, MaterialOverride = canopyMat };
+            AddChild(trunks); AddChild(canopies);
+
+            // ---- moss blobs at pillar bases ----
+            var mossMat = Mat(new Color("#2d5a27"), 1f, 0f);
+            foreach (var pil in Config.Pillars)
+            {
+                for (int i = 0; i < 3; i++)
+                {
+                    var moss = new MeshInstance3D
+                    {
+                        Mesh = new SphereMesh { Radius = 0.5f, Height = 0.35f, RadialSegments = 8, Rings = 4 },
+                        MaterialOverride = mossMat,
+                        Position = new Vector3(pil.Pos.X + rng.RandfRange(-1.6f, 1.6f), 0.06f, pil.Pos.Y + rng.RandfRange(-1.6f, 1.6f)),
+                        Scale = new Vector3(rng.RandfRange(0.5f, 1.1f), rng.RandfRange(0.3f, 0.55f), rng.RandfRange(0.5f, 1.1f)),
+                    };
+                    AddChild(moss);
+                }
+            }
+
+            // ---- fireflies (glowing, drifting) ----
+            _fireflyBase = new Vector3[22];
+            _fireflyPhase = new float[22];
+            var flyMat = new StandardMaterial3D { ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, AlbedoColor = new Color("#d8ff70"), EmissionEnabled = true, Emission = new Color("#d8ff70"), EmissionEnergyMultiplier = 6f };
+            var flyMM = new MultiMesh { Mesh = new SphereMesh { Radius = 0.05f, Height = 0.1f }, TransformFormat = MultiMesh.TransformFormatEnum.Transform3D, InstanceCount = 22 };
+            for (int i = 0; i < 22; i++)
+            {
+                _fireflyBase[i] = new Vector3(rng.RandfRange(-19f, 19f), rng.RandfRange(0.6f, 2.6f), rng.RandfRange(-12f, 12f));
+                _fireflyPhase[i] = rng.RandfRange(0, 6.28f);
+            }
+            _fireflies = new MultiMeshInstance3D { Multimesh = flyMM, MaterialOverride = flyMat };
+            AddChild(_fireflies);
+
+            // ---- drifting ground fog billboards ----
+            _fogTex = MakeFogTex();
+            var fogMat = new StandardMaterial3D
+            {
+                AlbedoColor = new Color(0.8f, 0.95f, 0.85f, 0.5f),
+                AlbedoTexture = _fogTex,
+                Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+                DepthDrawMode = BaseMaterial3D.DepthDrawModeEnum.Disabled,
+            };
+            for (int i = 0; i < 9; i++)
+            {
+                var fp = new MeshInstance3D
+                {
+                    Mesh = new PlaneMesh { Size = new Vector2(10f, 6f) },
+                    MaterialOverride = fogMat,
+                    Position = new Vector3(rng.RandfRange(-22f, 22f), rng.RandfRange(0.35f, 0.9f), rng.RandfRange(-12f, 12f)),
+                };
+                AddChild(fp);
+                _fogPlanes.Add((fp, rng.RandfRange(0.35f, 0.8f), fp.Position.Y));
             }
         }
 
@@ -1922,6 +2042,31 @@ namespace PatientZero
             else if (_joyBaseL != null && _joyBaseL.Visible)
             {
                 _joyBaseL.Visible = _joyKnobL.Visible = _joyBaseR.Visible = _joyKnobR.Visible = false;
+            }
+
+            // jungle atmosphere: fog breathing + drifting fog + fireflies
+            if (_bucket == ThemeBucket.Jungle && _env != null)
+            {
+                _env.FogDensity = 0.038f + 0.006f * Mathf.Sin(_time * 0.35f);
+                foreach (var (plane, speed, ybase) in _fogPlanes)
+                {
+                    var fp = plane.Position;
+                    fp.X += speed * dt;
+                    if (fp.X > 27f) fp.X = -27f;
+                    fp.Y = ybase + 0.12f * Mathf.Sin(_time * 0.5f + ybase * 3f);
+                    plane.Position = fp;
+                }
+                if (_fireflies != null)
+                {
+                    for (int i = 0; i < _fireflyBase.Length; i++)
+                    {
+                        var bp = _fireflyBase[i];
+                        float ph = _fireflyPhase[i];
+                        var pos = bp + new Vector3(Mathf.Sin(_time * 0.6f + ph) * 1.6f, Mathf.Sin(_time * 0.9f + ph * 2f) * 0.5f, Mathf.Cos(_time * 0.5f + ph) * 1.6f);
+                        float blink = 0.7f + 0.3f * Mathf.Sin(_time * 3f + ph * 3f);
+                        _fireflies.Multimesh.SetInstanceTransform(i, new Transform3D(Basis.Identity.Scaled(Vector3.One * blink), pos));
+                    }
+                }
             }
 
             // menu fx

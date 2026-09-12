@@ -10,7 +10,7 @@ namespace PatientZero
         NorthChokepoint, SouthPillar, EastFlank, WestFlank, CenterOpen, Balanced
     }
 
-    public enum ThemeBucket { Coastal, Desert, Temperate, Mountain, Urban }
+    public enum ThemeBucket { Coastal, Desert, Temperate, Mountain, Urban, Jungle }
 
     public struct Pillar
     {
@@ -127,6 +127,12 @@ namespace PatientZero
                 PillarFill = C("#2a3140"), PillarEdge = C("#46536b"), Accent = C("#bcd4e6"),
                 EnemyStandard = C("#a8cfe0"), EnemyFast = C("#d3e8f2"), EnemyTanky = C("#6b8299"),
                 Fog = new Color(0.706f, 0.804f, 0.886f, 0.1f) } },
+            { ThemeBucket.Jungle, new ThemeData {
+                Label = "JUNGLE / WILD STRAIN",
+                Bg = C("#04100a"), Floor = C("#1d3319"), Grid = C("#16301a"),
+                PillarFill = C("#2a3d24"), PillarEdge = C("#9fff5f"), Accent = C("#c4ff4d"),
+                EnemyStandard = C("#4a7c3a"), EnemyFast = C("#7cb35a"), EnemyTanky = C("#2d4a26"),
+                Fog = new Color(0.1f, 0.2f, 0.1f, 0.22f) } },
             { ThemeBucket.Urban, new ThemeData {
                 Label = "URBAN / INFECTED STRAIN",
                 Bg = C("#0a0a10"), Floor = C("#15151f"), Grid = C("#20202e"),
