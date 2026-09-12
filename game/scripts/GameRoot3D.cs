@@ -71,15 +71,15 @@ namespace PatientZero
 
         private static readonly Dictionary<EnemyType, string> ModelPaths = new()
         {
-            { EnemyType.Standard, "res://assets/models/Skeleton_Minion.glb" },
-            { EnemyType.Fast, "res://assets/models/Skeleton_Rogue.glb" },
-            { EnemyType.Tanky, "res://assets/models/Skeleton_Warrior.glb" },
+            { EnemyType.Standard, "res://assets/models/zombie_standard.glb" },
+            { EnemyType.Fast, "res://assets/models/zombie_runner.glb" },
+            { EnemyType.Tanky, "res://assets/models/zombie_brute.glb" },
         };
         private static readonly Dictionary<EnemyType, float> ModelScale = new()
         {
-            { EnemyType.Standard, 0.9f },
-            { EnemyType.Fast, 0.8f },
-            { EnemyType.Tanky, 1.35f },
+            { EnemyType.Standard, 1.0f },
+            { EnemyType.Fast, 1.0f },
+            { EnemyType.Tanky, 1.0f },
         };
         private readonly Dictionary<EnemyType, PackedScene?> _modelCache = new();
         private PackedScene? _pillarScene;
@@ -371,16 +371,64 @@ namespace PatientZero
             catch { return null; }
         }
 
+        // ---- Custom character override: drop YOUR .glb into res://assets/custom/ ----
+        private static readonly string[] CustomNames =
+            { "player", "zombie_standard", "zombie_runner", "zombie_brute" };
+
+        private static PackedScene? LoadCharacter(string builtinPath, string customName)
+        {
+            string custom = $"res://assets/custom/{customName}.glb";
+            if (ResourceLoader.Exists(custom))
+            {
+                var s = LoadScene(custom);
+                if (s != null) return s;
+            }
+            return LoadScene(builtinPath);
+        }
+
+        private static Aabb ComputeModelAabb(Node node, Transform3D accum, ref bool first, ref Aabb box)
+        {
+            if (node is MeshInstance3D mi && mi.Mesh != null)
+            {
+                var a = accum * mi.GetAabb();
+                box = first ? a : box.Merge(a);
+                first = false;
+            }
+            foreach (var c in node.GetChildren())
+                if (c is Node3D n3) ComputeModelAabb(n3, accum * n3.Transform, ref first, ref box);
+            return box;
+        }
+
+        /// <summary>Wraps any GLB so it is targetHeight tall, XZ-centered, feet on the ground.
+        /// Outer wrapper scale stays free for gameplay (spawn-in, hit-flash).</summary>
+        private static Node3D NormalizeModel(Node3D model, float targetHeight)
+        {
+            var box = new Aabb();
+            bool first = true;
+            ComputeModelAabb(model, Transform3D.Identity, ref first, ref box);
+            if (first || box.Size.Y < 0.0001f) return model;
+            float s = targetHeight / box.Size.Y;
+            model.Position = new Vector3(
+                -(box.Position.X + box.Size.X * 0.5f),
+                -box.Position.Y,
+                -(box.Position.Z + box.Size.Z * 0.5f));
+            var inner = new Node3D { Name = model.Name + "_norm" };
+            inner.AddChild(model);
+            inner.Scale = Vector3.One * s;
+            var outer = new Node3D { Name = model.Name + "_root" };
+            outer.AddChild(inner);
+            return outer;
+        }
+
         // ==================================================================
         // PLAYER
         // ==================================================================
         private void BuildPlayer()
         {
-            var scene = LoadScene("res://assets/models/Knight.glb");
+            var scene = LoadCharacter("res://assets/models/soldier.glb", "player");
             if (scene != null)
             {
-                _playerNode = scene.Instantiate<Node3D>();
-                _playerNode.Scale = Vector3.One * 1.05f;
+                _playerNode = NormalizeModel(scene.Instantiate<Node3D>(), 1.8f);
                 _playerAnim = FindAnim(_playerNode);
             }
             else
@@ -702,17 +750,29 @@ namespace PatientZero
             Node3D node;
             if (!_modelCache.TryGetValue(type, out var scene))
             {
-                scene = LoadScene(ModelPaths[type]);
+                string customName = type switch
+                {
+                    EnemyType.Fast => "zombie_runner",
+                    EnemyType.Tanky => "zombie_brute",
+                    _ => "zombie_standard",
+                };
+                scene = LoadCharacter(ModelPaths[type], customName);
                 _modelCache[type] = scene;
             }
+            float targetH = type switch
+            {
+                EnemyType.Fast => 1.55f,
+                EnemyType.Tanky => 2.15f,
+                _ => 1.75f,
+            };
             AnimationPlayer? ap = null;
             if (scene != null)
             {
-                node = scene.Instantiate<Node3D>();
+                node = NormalizeModel(scene.Instantiate<Node3D>(), targetH);
                 node.Scale = Vector3.One * ModelScale[type] * 0.05f; // spawn scale-in
                 ap = FindAnim(node);
                 if (ap != null) PlayAnim(ap, "Walk", type == EnemyType.Fast ? 1.5f : 1f);
-                TintModel(node, Config.EnemyTint(_theme, type), type == EnemyType.Tanky ? 0.5f : 0.3f);
+                TintModel(node, Config.EnemyTint(_theme, type), type == EnemyType.Tanky ? 0.4f : 0.22f);
             }
             else
             {
@@ -836,7 +896,7 @@ namespace PatientZero
             _fxRoot.AddChild(node);
             _bulletNodes.Add((node, proj));
             _muzzleLight.LightEnergy = 2.2f;
-            _muzzleLight.Position = new Vector3(p.Pos.X, 1.4f, p.Pos.Y);
+            _muzzleLight.Position = new Vector3(p.Pos.X + p.Aim.X * 0.8f, 1.35f, p.Pos.Y + p.Aim.Y * 0.8f);
         }
 
         private void TryMelee()
@@ -1339,7 +1399,8 @@ namespace PatientZero
             // player
             if (_playerNode.Visible)
             {
-                _playerNode.Position = new Vector3(_player.Pos.X, 0, _player.Pos.Y);
+                float pbob = _player.Vel.LengthSquared() > 0.1f ? Mathf.Abs(Mathf.Sin(_time * 8f)) * 0.05f : 0f;
+                _playerNode.Position = new Vector3(_player.Pos.X, pbob, _player.Pos.Y);
                 if (_player.Aim.LengthSquared() > 0.001f)
                 {
                     float yaw = Mathf.Atan2(_player.Aim.X, _player.Aim.Y);
@@ -1356,7 +1417,15 @@ namespace PatientZero
             {
                 if (!_enemyNodes.TryGetValue(e.Id, out var node)) continue;
                 float rise = e.SpawnT > 0 ? -1.5f * (e.SpawnT / 0.55f) : 0f;
-                node.Position = new Vector3(e.Pos.X, rise, e.Pos.Y);
+                bool hasAnim = _enemyAnims.TryGetValue(e.Id, out var apE) && apE != null;
+                float bob = 0f, roll = 0f;
+                if (!hasAnim && e.SpawnT <= 0)
+                {
+                    float sp = e.Type == EnemyType.Fast ? 9f : 5.5f;
+                    bob = Mathf.Abs(Mathf.Sin(_time * sp + e.Id * 1.7f)) * 0.055f;
+                    roll = Mathf.Sin(_time * 2.4f + e.Id) * 0.07f; // shamble sway
+                }
+                node.Position = new Vector3(e.Pos.X, rise + bob, e.Pos.Y);
                 float baseScale = ModelScale.GetValueOrDefault(e.Type, 1f);
                 float s = e.SpawnT > 0 ? baseScale * Mathf.Max(0.05f, 1f - e.SpawnT / 0.55f) : baseScale;
                 if (e.Flash > 0.3f) s *= 1.12f;
@@ -1364,13 +1433,12 @@ namespace PatientZero
                 if (e.Vel.LengthSquared() > 0.01f)
                 {
                     float yaw = Mathf.Atan2(e.Vel.X, e.Vel.Y);
-                    node.Rotation = new Vector3(0, yaw, 0);
+                    node.Rotation = new Vector3(0, yaw, roll);
                 }
                 // keep walking after spawn, attack anim handled on hit
-                if (e.SpawnT <= 0 && _enemyAnims.TryGetValue(e.Id, out var ap) && ap != null
-                    && ap.CurrentAnimation.ToString().Contains("Attack") && !ap.IsPlaying())
+                if (hasAnim && e.SpawnT <= 0 && apE!.CurrentAnimation.ToString().Contains("Attack") && !apE.IsPlaying())
                 {
-                    PlayAnim(ap, "Walk", e.Type == EnemyType.Fast ? 1.5f : 1f);
+                    PlayAnim(apE, "Walk", e.Type == EnemyType.Fast ? 1.5f : 1f);
                 }
             }
 
