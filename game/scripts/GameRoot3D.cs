@@ -27,6 +27,8 @@ namespace PatientZero
         private ThemeBucket _bucket = ThemeBucket.Jungle;
         private string _seedLabel = "";
         private bool _screenshotMode;
+        private bool _mobileControls = true;
+        private bool _overShotMode;
         private float _shotAt = -1f;
         private bool _forceBoss;
         private bool _menuShotMode;
@@ -192,6 +194,8 @@ namespace PatientZero
         private CanvasLayer _ui = null!;
         private Label _waveLabel = null!, _scoreLabel = null!, _brainBadge = null!, _themeTag = null!;
         private Label _tauntLabel = null!, _reasonLabel = null!;
+        private Label _tacticLabel = null!;
+        private float _headshotHintT;
         private Label _waveBanner = null!;
         private Control _crosshair = null!;
         private Button _camBtn = null!;
@@ -207,15 +211,31 @@ namespace PatientZero
         private Label _ammoLabel = null!;
         private bool _autoFire;
         private Tween? _kickTween;
+        // gun holder (rigid chest rig in player space) + first-person viewmodel
+        private Node3D? _gunHolder;
+        private Skeleton3D? _playerSkel;
+        private int _boneUpperR = -1, _boneForeR = -1, _boneUpperL = -1, _boneForeL = -1;
+        private Node3D? _vmHolder;
+        private readonly List<Node3D?> _vmNodes = new();
+        private Node3D? _vmArmR, _vmArmL;
+        private MeshInstance3D? _vmArmRM, _vmArmLM;
+        private Node3D? _tppArmR, _tppArmL;
+        private MeshInstance3D? _tppArmRM, _tppArmLM;
+        private Vector3 _vmBasePos = new(0.22f, -0.19f, -0.55f);
+        private Vector3 _vmBaseRot = new(-2f, 180f, 0f);
+        private float _vmSwayX, _vmLastYaw, _vmRecoil;
+        private Node3D? _muzzleMarker;
 
         // ---------- blood + flame fx ----------
         private readonly Dictionary<int, (List<StandardMaterial3D> mats, List<Color> orig)> _bloodMats = new();
-        private bool _weaponBoneSpace;
         private readonly List<(Control root, ColorRect fill)> _hpBars = new();
         private Control _bossBar = null!;
         private ColorRect _bossFill = null!;
         private Label _hpNum = null!;
         private readonly List<MeshInstance3D> _decals = new();
+        private Node3D? _medkitNode;
+        private float _medkitPulse;
+        private Label _medkitHint = null!;
         private static readonly Color BloodRed = new(0.55f, 0.05f, 0.08f);
 
         private void BloodDecal(Vector2 pos, float scale = 1f)
@@ -326,18 +346,72 @@ namespace PatientZero
             s.BorderColor = new Color(0.18f, 1f, 0.53f, 0.4f);
             s.CornerRadiusTopLeft = s.CornerRadiusTopRight = s.CornerRadiusBottomLeft = s.CornerRadiusBottomRight = 6;
             b.AddThemeStyleboxOverride("normal", s);
-            b.AddThemeStyleboxOverride("hover", s);
-            b.AddThemeStyleboxOverride("pressed", s);
+            var h = new StyleBoxFlat { BgColor = new Color(0.05f, 0.24f, 0.12f, alpha + 0.25f) };
+            h.SetBorderWidthAll(1);
+            h.BorderColor = new Color(0.5f, 1f, 0.7f, 0.95f);
+            h.CornerRadiusTopLeft = h.CornerRadiusTopRight = h.CornerRadiusBottomLeft = h.CornerRadiusBottomRight = 6;
+            b.AddThemeStyleboxOverride("hover", h);
+            var pr = new StyleBoxFlat { BgColor = new Color(0.02f, 0.08f, 0.04f, alpha) };
+            pr.SetBorderWidthAll(1);
+            pr.BorderColor = new Color(0.18f, 1f, 0.53f, 0.55f);
+            pr.CornerRadiusTopLeft = pr.CornerRadiusTopRight = pr.CornerRadiusBottomLeft = pr.CornerRadiusBottomRight = 6;
+            b.AddThemeStyleboxOverride("pressed", pr);
             b.AddThemeColorOverride("font_color", TermGreen);
+            b.AddThemeColorOverride("font_hover_color", new Color(0.72f, 1f, 0.82f));
+            b.AddThemeColorOverride("font_pressed_color", new Color(0.85f, 1f, 0.9f));
+        }
+
+        private void StyleBtnRed(Button b, float alpha = 0.68f)
+        {
+            var s = new StyleBoxFlat { BgColor = new Color(0.05f, 0.008f, 0.012f, alpha) };
+            s.SetBorderWidthAll(1);
+            s.BorderColor = new Color(1f, 0.3f, 0.37f, 0.5f);
+            s.CornerRadiusTopLeft = s.CornerRadiusTopRight = s.CornerRadiusBottomLeft = s.CornerRadiusBottomRight = 6;
+            b.AddThemeStyleboxOverride("normal", s);
+            var h = new StyleBoxFlat { BgColor = new Color(0.3f, 0.06f, 0.08f, alpha + 0.25f) };
+            h.SetBorderWidthAll(1);
+            h.BorderColor = new Color(1f, 0.5f, 0.55f, 0.95f);
+            h.CornerRadiusTopLeft = h.CornerRadiusTopRight = h.CornerRadiusBottomLeft = h.CornerRadiusBottomRight = 6;
+            b.AddThemeStyleboxOverride("hover", h);
+            var pr = new StyleBoxFlat { BgColor = new Color(0.08f, 0.015f, 0.02f, alpha) };
+            pr.SetBorderWidthAll(1);
+            pr.BorderColor = new Color(1f, 0.3f, 0.37f, 0.6f);
+            pr.CornerRadiusTopLeft = pr.CornerRadiusTopRight = pr.CornerRadiusBottomLeft = pr.CornerRadiusBottomRight = 6;
+            b.AddThemeStyleboxOverride("pressed", pr);
+            b.AddThemeColorOverride("font_color", new Color(1f, 0.55f, 0.6f));
+            b.AddThemeColorOverride("font_hover_color", new Color(1f, 0.8f, 0.82f));
+            b.AddThemeColorOverride("font_pressed_color", new Color(1f, 0.85f, 0.87f));
         }
         private Control _tauntPanel = null!;
         private ColorRect _hpFill = null!;
+        private ColorRect _bottomHpFill = null!;
+        private Label _bottomHpNum = null!;
+        private ColorRect _hitOverlay = null!;
+        private float _hitOverlayT;
+        private Label _damageIndicator = null!;
         private Button _purgeBtn = null!;
         private Control _startPanel = null!, _overPanel = null!;
+        // intro cinematic (plays once per process, skipped in automated test modes)
+        private VideoStreamPlayer? _introVideo;
+        private Control? _introOverlay;
+        private static bool _introSeen;
+        // story sequence — typewriter intro lines (research paper framing: Subject #1)
+        private Control? _storyOverlay;
+        private Label? _storyText;
+        private string[] _storyLines = System.Array.Empty<string>();
+        private int _storyLine;
+        private float _storyT;
         private Label _startSpec = null!, _startGreet = null!, _startSeed = null!, _startBest = null!;
-        private Label _rRun = null!, _rSpec = null!, _rWave = null!, _rKills = null!,
-                      _rArchetype = null!, _rCause = null!, _rWeak = null!, _rRemark = null!, _rSource = null!;
-        private ColorRect _adaptFill = null!;
+        // death / autopsy panel
+        private Label _oGlitchA = null!, _oGlitchB = null!, _oTitle = null!, _oMeta = null!;
+        private Label _oRec = null!, _oArchive = null!, _oRunLabel = null!, _oFileId = null!;
+        private Label _oSpec = null!, _oArchetype = null!, _oWaves = null!, _oKills = null!, _oScore = null!;
+        private Label _oCause = null!, _oWeak = null!, _oRemark = null!, _oSource = null!, _oAdaptPct = null!;
+        private Label _oActionStatus = null!;
+        private ColorRect _oAdaptFill = null!, _oRedPulse = null!;
+        private Label _oWatermark = null!;
+        private Vector2 _oGlitchBase;
+        private float _oGlitchT, _oAdaptT = -1f, _oAdaptTarget;
 
         // taunt typewriter
         private string _tauntFull = "";
@@ -373,9 +447,10 @@ namespace PatientZero
                 _bgmBoss = new AudioStreamPlayer { Stream = boss, VolumeDb = -80f };
                 AddChild(_bgmBoss);
             }
-            foreach (var n in new[] { "shoot", "hit", "melee", "purge", "hurt", "wave", "over", "taunt", "boss", "waterbolt", "splash", "pistol", "shotgun", "reload", "switch" })
+            foreach (var n in new[] { "shoot", "akm_fire", "hit", "melee", "purge", "hurt", "wave", "over", "taunt", "boss", "waterbolt", "splash", "pistol", "shotgun", "reload", "switch" })
             {
-                var s = GD.Load<AudioStream>($"res://assets/audio/{n}.wav");
+                var path = $"res://assets/audio/{n}.wav";
+                var s = GD.Load<AudioStream>(path);
                 if (s != null) _sfx[n] = s;
             }
             for (int i = 0; i < 10; i++)
@@ -418,6 +493,10 @@ namespace PatientZero
                     Config.GeminiApiKey = arg.Substring(6).Trim();
                 if (arg == "--screenshot")
                     _screenshotMode = true;
+                if (arg == "--mobile")
+                    _mobileControls = true;
+                if (arg == "--over")
+                    _overShotMode = true;
                 if (arg == "--menushot")
                     _menuShotMode = true;
                 if (arg == "--forceboss")
@@ -430,6 +509,7 @@ namespace PatientZero
                         _ => CamMode.Top,
                     };
             }
+            _mobileControls = true;
             _theme = Config.Themes[_bucket];
             _seedLabel = $"SEED: {_theme.Label}";
 
@@ -439,12 +519,21 @@ namespace PatientZero
             BuildArena();
             BuildPlayer();
             BuildUi();
+            BuildIntro();
+            if (_introOverlay == null && !_screenshotMode && !_overShotMode && !_menuShotMode)
+                BuildStoryIntro();
             InitAudio();
             ShowStart();
             if (_screenshotMode)
             {
                 StartRun();
                 _shotAt = 4.0f;
+            }
+            else if (_overShotMode)
+            {
+                StartRun();
+                _shotAt = 4.6f;
+                GetTree().CreateTimer(0.6).Timeout += () => { if (_phase == Phase.Playing) OnPlayerDeath(); };
             }
             else if (_menuShotMode)
             {
@@ -457,6 +546,11 @@ namespace PatientZero
         // ==================================================================
         private void BuildWorld()
         {
+            // crisp edges — biggest single visual upgrade on the mobile renderer
+            // (skipped in automated shot modes: MSAA + Vulkan readback deadlocks there)
+            if (!_screenshotMode && !_overShotMode && !_menuShotMode)
+                GetViewport().Msaa3D = Viewport.Msaa.Msaa4X;
+
             var env = new Godot.Environment
             {
                 BackgroundMode = Godot.Environment.BGMode.Color,
@@ -466,13 +560,15 @@ namespace PatientZero
                 AmbientLightEnergy = 1.05f,
                 TonemapMode = Godot.Environment.ToneMapper.Aces,
                 GlowEnabled = true,
-                GlowIntensity = 0.6f,
-                GlowBloom = 0.1f,
+                GlowIntensity = 0.85f,
+                GlowBloom = 0.12f,
+                GlowHdrThreshold = 1.05f,
+                AdjustmentEnabled = true,
+                AdjustmentContrast = 1.07f,
+                AdjustmentSaturation = 1.16f,
                 FogEnabled = true,
                 FogLightColor = _theme.Fog with { A = 1f },
                 FogDensity = _bucket == ThemeBucket.Jungle ? 0.038f : 0.018f,
-                SsaoEnabled = true,
-                SsaoRadius = 1.6f,
             };
             _env = env;
             _worldEnv = new WorldEnvironment { Environment = env };
@@ -771,12 +867,44 @@ namespace PatientZero
 
         private static void SetJoy(TextureRect baseR, TextureRect knob, (Vector2 o, Vector2 c, bool active) s, float k)
         {
-            baseR.Visible = s.active; knob.Visible = s.active;
-            if (!s.active) return;
+            if (!s.active)
+            {
+                if (baseR.Visible)
+                    knob.Position = baseR.Position + (baseR.Size - knob.Size) / 2f;
+                return;
+            }
+            baseR.Visible = true; knob.Visible = true;
             baseR.Position = s.o * k - baseR.Size / 2;
             var d = (s.c - s.o) * k;
             if (d.Length() > 46f) d = d.Normalized() * 46f;
             knob.Position = s.o * k - knob.Size / 2 + d * 0.55f;
+        }
+
+        private void UpdateTacticHint()
+        {
+            if (_tacticLabel == null) return;
+            Enemy? target = null;
+            float best = float.MaxValue;
+            foreach (var e in _enemies)
+            {
+                if (e.Dead || e.SpawnT > 0) continue;
+                float distance = _player.Pos.DistanceTo(e.Pos);
+                if (distance < best) { best = distance; target = e; }
+            }
+            if (_phase != Phase.Playing || target == null)
+            {
+                _tacticLabel.Visible = false;
+                return;
+            }
+            _tacticLabel.Visible = true;
+            if (_headshotHintT > 0f)
+            {
+                _headshotHintT -= 0.05f;
+                return;
+            }
+            string type = target.Type == EnemyType.Boss ? "GATE CORE" : target.Type == EnemyType.Tanky ? "HEAVY HOST" : "HOST";
+            _tacticLabel.Text = $"PZ-TACTIC // {type}: AIM HEAD  •  PRECISION HIT = BONUS SCORE";
+            _tacticLabel.Modulate = new Color(1f, 0.62f, 0.2f, 0.92f);
         }
 
         private void UpdateEnemyBars()
@@ -819,26 +947,61 @@ namespace PatientZero
             if (i == _weaponIdx || _reloading || i < 0 || i >= Config.Weapons.Length) return;
             var oldN = _weaponNodes.Count > _weaponIdx ? _weaponNodes[_weaponIdx] : null;
             var newN = _weaponNodes.Count > i ? _weaponNodes[i] : null;
+            int oldIdx = _weaponIdx;
             _weaponIdx = i;
             PlaySfx("switch");
             SpawnBurst(new Vector3(_player.Pos.X, 1.2f, _player.Pos.Y), Config.Weapons[i].BulletColor, 14, 4f);
+            var oldRest = RestTransform(oldIdx);
             if (oldN != null)
             {
                 var t = CreateTween();
-                t.TweenProperty(oldN, "rotation_degrees", new Vector3(-85, 40, 30), 0.16f);
+                t.TweenProperty(oldN, "rotation_degrees", oldRest.Rot + new Vector3(5, 40, 30), 0.16f);
                 t.Parallel().TweenProperty(oldN, "scale", Vector3.One * 0.01f, 0.16f);
-                t.TweenCallback(Callable.From(() => { if (IsInstanceValid(oldN)) { oldN.Visible = false; oldN.RotationDegrees = Vector3.Zero; oldN.Scale = Vector3.One; } }));
+                t.TweenCallback(Callable.From(() =>
+                {
+                    if (!IsInstanceValid(oldN)) return;
+                    oldN.Visible = false;
+                    SetRest(oldN, oldIdx);
+                }));
             }
+            var newRest = RestTransform(i);
             if (newN != null)
             {
                 newN.Visible = true;
                 newN.Scale = Vector3.One * 0.01f;
-                newN.RotationDegrees = new Vector3(-90, -540, 30);
+                newN.RotationDegrees = newRest.Rot + new Vector3(0, -540, 30);
                 var t2 = CreateTween().SetTrans(Tween.TransitionType.Back).SetEase(Tween.EaseType.Out);
-                t2.TweenProperty(newN, "scale", Vector3.One, 0.38f);
-                t2.Parallel().TweenProperty(newN, "rotation_degrees", Vector3.Zero, 0.38f);
+                t2.TweenProperty(newN, "scale", Vector3.One * newRest.Scale, 0.38f);
+                t2.Parallel().TweenProperty(newN, "rotation_degrees", newRest.Rot, 0.38f);
+                t2.TweenProperty(newN, "position", newRest.Pos, 0.2f);
             }
+            // swap first-person viewmodel too
+            var oldVm = _vmNodes.Count > oldIdx ? _vmNodes[oldIdx] : null;
+            var newVm = _vmNodes.Count > i ? _vmNodes[i] : null;
+            if (oldVm != null) oldVm.Visible = false;
+            if (newVm != null && _camMode == CamMode.Fpp && _phase == Phase.Playing)
+            {
+                newVm.Visible = true;
+                newVm.Scale = Vector3.One * 0.01f;
+                var t3 = CreateTween().SetTrans(Tween.TransitionType.Back).SetEase(Tween.EaseType.Out);
+                t3.TweenProperty(newVm, "scale", Vector3.One * Config.Weapons[i].VmScale, 0.34f);
+            }
+            CacheMuzzleMarker();
             UpdateWeaponHud();
+        }
+
+        private (Vector3 Pos, Vector3 Rot, float Scale) RestTransform(int i)
+        {
+            var w = Config.Weapons[i];
+            return (w.MountPos, w.MountRot, w.MountScale); // player-space chest rig
+        }
+
+        private void SetRest(Node3D n, int i)
+        {
+            var (pos, rot, scale) = RestTransform(i);
+            n.Position = pos;
+            n.RotationDegrees = rot;
+            n.Scale = Vector3.One * scale;
         }
 
         private void StartReload()
@@ -851,9 +1014,10 @@ namespace PatientZero
             var n = _weaponNodes.Count > _weaponIdx ? _weaponNodes[_weaponIdx] : null;
             if (n != null)
             {
+                var rest = RestTransform(_weaponIdx);
                 var t = CreateTween();
-                t.TweenProperty(n, "rotation_degrees", new Vector3(-42, 0, 14), 0.22f);
-                t.TweenProperty(n, "rotation_degrees", Vector3.Zero, 0.32f).SetDelay(Mathf.Max(0.05f, w.ReloadTime - 0.32f));
+                t.TweenProperty(n, "rotation_degrees", rest.Rot + new Vector3(48, 0, 14), 0.22f);
+                t.TweenProperty(n, "rotation_degrees", rest.Rot, 0.32f).SetDelay(Mathf.Max(0.05f, w.ReloadTime - 0.32f));
             }
             UpdateWeaponHud();
             GetTree().CreateTimer(w.ReloadTime).Timeout += () =>
@@ -987,47 +1151,78 @@ namespace PatientZero
             {
                 _playerNode = NormalizeModel(scene.Instantiate<Node3D>(), 1.8f);
                 _playerAnim = FindAnim(_playerNode);
+                if (_playerAnim != null) _playerAnim.ProcessPriority = -100; // animation applies BEFORE our aim-lock writes
                 _playerRig = FindRig(_playerNode);
 
-                // weapon slots — mounted on the hand BONE so the grip stays in his fist
-                Node3D weaponParent = _playerNode;
-                var playerSkel = _playerNode.FindChildren("*", "Skeleton3D", true, false).OfType<Skeleton3D>().FirstOrDefault();
-                if (playerSkel != null && playerSkel.FindBone("forearm_r") >= 0)
+                // weapon slots — rigid chest rig in player space; arms are aim-locked
+                // onto the grip every frame (see SyncVisuals) so hands truly hold it
+                _playerSkel = _playerNode.FindChildren("*", "Skeleton3D", true, false).OfType<Skeleton3D>().FirstOrDefault();
+                _gunHolder = new Node3D { Name = "GunHolder" };
+                _playerNode.AddChild(_gunHolder);
+                // subtle weapon fill light so the gun pops against the dark arena
+                var gunLight = new OmniLight3D
                 {
-                    var ba = new BoneAttachment3D { BoneName = "forearm_r" };
-                    playerSkel.AddChild(ba);
-                    weaponParent = ba;
-                }
-                _weaponBoneSpace = weaponParent != _playerNode;
-                var customWeapon = LoadScene("res://assets/custom/weapon.glb");
+                    LightColor = new Color(0.75f, 1f, 0.85f),
+                    LightEnergy = 0.55f,
+                    OmniRange = 1.6f,
+                    ShadowEnabled = false,
+                    Position = new Vector3(0.1f, 1.45f, 0.35f),
+                };
+                _playerNode.AddChild(gunLight);
                 for (int i = 0; i < Config.Weapons.Length; i++)
                 {
-                    Node3D? wn = null;
-                    if (customWeapon != null)
-                        wn = NormalizeLength(customWeapon.Instantiate<Node3D>(), 0.95f);
-                    else
-                    {
-                        var ws = LoadScene(Config.Weapons[i].Model);
-                        if (ws != null) wn = ws.Instantiate<Node3D>();
-                    }
+                    Node3D? wn = MakeWeaponNode(i);
                     if (wn != null)
                     {
-                        if (_weaponBoneSpace)
-                        {
-                            wn.Position = new Vector3(0.02f, -0.16f, 0.05f);
-                            wn.RotationDegrees = new Vector3(-90f, 0f, 0f);
-                            wn.Scale = Vector3.One * 0.45f;
-                        }
-                        else
-                        {
-                            wn.Position = new Vector3(0.28f, 1.0f, 0.22f);
-                        }
+                        var w = Config.Weapons[i];
+                        wn.Position = w.MountPos;
+                        wn.RotationDegrees = w.MountRot;
+                        wn.Scale = Vector3.One * w.MountScale;
                         wn.Visible = i == _weaponIdx;
-                        weaponParent.AddChild(wn);
+                        _gunHolder.AddChild(wn);
                     }
                     _weaponNodes.Add(wn);
                 }
                 _rifle = _weaponNodes.Count > _weaponIdx ? _weaponNodes[_weaponIdx] : null;
+
+                // Explicit overlay arms keep the weapon visibly braced even when the
+                // imported rig's animation has a different hand rest pose.
+                _tppArmR = MakeVmArm();
+                _tppArmRM = _tppArmR?.GetChildOrNull<MeshInstance3D>(0);
+                _tppArmL = MakeVmArm();
+                _tppArmLM = _tppArmL?.GetChildOrNull<MeshInstance3D>(0);
+                if (_tppArmR != null) _playerNode.AddChild(_tppArmR);
+                if (_tppArmL != null) _playerNode.AddChild(_tppArmL);
+
+                // first-person viewmodel — second copy parented to the camera
+                if (_cam != null)
+                {
+                    _vmHolder = new Node3D { Name = "VmHolder" };
+                    _vmHolder.Position = _vmBasePos;
+                    _vmHolder.RotationDegrees = _vmBaseRot;
+                    _cam.AddChild(_vmHolder);
+                    for (int i = 0; i < Config.Weapons.Length; i++)
+                    {
+                        Node3D? vm = MakeWeaponNode(i);
+                        if (vm != null)
+                        {
+                            vm.Position = Vector3.Zero;
+                            vm.RotationDegrees = Config.Weapons[i].VmRot;
+                            vm.Scale = Vector3.One * Config.Weapons[i].VmScale;
+                            vm.Visible = false;
+                            _vmHolder.AddChild(vm);
+                        }
+                        _vmNodes.Add(vm);
+                    }
+
+                    // viewmodel arms — sleeves + gloves so hands actually hold the gun in FPP
+                    _vmArmR = MakeVmArm();
+                    _vmArmRM = _vmArmR?.GetChildOrNull<MeshInstance3D>(0);
+                    if (_vmArmR != null) { _vmHolder.AddChild(_vmArmR); _vmArmR.Visible = false; }
+                    _vmArmL = MakeVmArm();
+                    _vmArmLM = _vmArmL?.GetChildOrNull<MeshInstance3D>(0);
+                    if (_vmArmL != null) { _vmHolder.AddChild(_vmArmL); _vmArmL.Visible = false; }
+                }
             }
             else
             {
@@ -1041,6 +1236,129 @@ namespace PatientZero
                 _playerNode.AddChild(body);
             }
             AddChild(_playerNode);
+
+            // aim-lock arms — the gun is rigid on the chest rig and the upper-arm
+            // bones are pose-overridden each frame so the hands hold grip + foregrip
+            if (_playerSkel != null)
+            {
+                _boneUpperR = _playerSkel.FindBone("upperarm_r");
+                _boneForeR = _playerSkel.FindBone("forearm_r");
+                _boneUpperL = _playerSkel.FindBone("upperarm_l");
+                _boneForeL = _playerSkel.FindBone("forearm_l");
+                Dbg($"[RIG] aim bones uR={_boneUpperR} fR={_boneForeR} uL={_boneUpperL} fL={_boneForeL} (>=0 means live arm-aim)");
+            }
+            CacheMuzzleMarker();
+        }
+
+        /// <summary>Rest-pose chain product — bone transform in skeleton space without animation.</summary>
+        private static Transform3D BoneGlobalRest(Skeleton3D s, int bone)
+        {
+            var t = s.GetBoneRest(bone);
+            int p = s.GetBoneParent(bone);
+            while (p >= 0)
+            {
+                t = s.GetBoneRest(p) * t;
+                p = s.GetBoneParent(p);
+            }
+            return t;
+        }
+
+        /// <summary>Points a bone's rest direction at a world target by writing the bone pose
+        /// AFTER the animation pass (AnimationPlayer runs at ProcessPriority -100).
+        /// NaN-proof: degenerate/antiparallel cases fall back safely.</summary>
+        private void AimBoneAt(int boneId, Vector3 targetWorld)
+        {
+            if (_playerSkel == null || boneId < 0) return;
+            var skelT = _playerSkel.GlobalTransform;
+            var restWorld = skelT * BoneGlobalRest(_playerSkel, boneId);
+            var boneWorld = skelT * _playerSkel.GetBoneGlobalPose(boneId);
+            var to = targetWorld - boneWorld.Origin;
+            if (to.LengthSquared() < 0.0004f) return;
+            var from = restWorld.Basis.Y;
+            float fl = from.Length();
+            if (fl < 0.0001f) return;
+            from /= fl;
+
+            Quaternion q;
+            float dot = from.Dot(to.Normalized());
+            if (dot < -0.9995f)
+            {
+                // antiparallel — rotate 180° around any perpendicular axis
+                var axis = Mathf.Abs(from.Y) < 0.9f ? Vector3.Up : Vector3.Right;
+                var perp = (axis - from * axis.Dot(from)).Normalized();
+                q = new Quaternion(perp, Mathf.Pi);
+            }
+            else
+            {
+                q = new Quaternion(from, to.Normalized());
+            }
+
+            var wantBasis = (new Basis(q) * restWorld.Basis).Orthonormalized();
+            // reject NaNs before they poison the skin and kill the renderer
+            if (!wantBasis.X.IsFinite() || !wantBasis.Y.IsFinite() || !wantBasis.Z.IsFinite()
+                || !boneWorld.Origin.IsFinite())
+                return;
+
+            int parentId = _playerSkel.GetBoneParent(boneId);
+            var parentWorld = parentId >= 0 ? skelT * _playerSkel.GetBoneGlobalPose(parentId) : skelT;
+            var local = parentWorld.AffineInverse() * new Transform3D(wantBasis, boneWorld.Origin);
+            var lb = local.Basis.Orthonormalized();
+            if (!lb.X.IsFinite() || !lb.Y.IsFinite() || !lb.Z.IsFinite()) return;
+            _playerSkel.SetBonePose(boneId,
+                new Transform3D(lb, _playerSkel.GetBoneRest(boneId).Origin));
+        }
+
+        private Node3D? MakeWeaponNode(int i)
+        {
+            var customWeapon = LoadScene("res://assets/custom/weapon.glb");
+            if (customWeapon != null)
+                return NormalizeLength(customWeapon.Instantiate<Node3D>(), 0.95f);
+            var ws = LoadScene(Config.Weapons[i].Model);
+            return ws?.Instantiate<Node3D>();
+        }
+
+        /// <summary>An FPP viewmodel arm: sleeve cylinder + glove sphere, oriented per-frame.</summary>
+        private static Node3D? MakeVmArm()
+        {
+            var root = new Node3D();
+            var sleeveMat = new StandardMaterial3D { AlbedoColor = new Color("#3d4633"), Roughness = 0.88f, Metallic = 0.04f };
+            var sleeve = new MeshInstance3D
+            {
+                Mesh = new CylinderMesh { TopRadius = 0.05f, BottomRadius = 0.072f, Height = 1f, RadialSegments = 10 },
+                MaterialOverride = sleeveMat,
+                RotationDegrees = new Vector3(-90f, 0f, 0f),
+            };
+            root.AddChild(sleeve);
+            var glove = new MeshInstance3D
+            {
+                Mesh = new SphereMesh { Radius = 0.056f, Height = 0.112f, RadialSegments = 10 },
+                MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color("#22261e"), Roughness = 0.72f },
+            };
+            root.AddChild(glove);
+            return root;
+        }
+
+        private static void OrientVmArm(Node3D? root, MeshInstance3D? sleeve, Vector3 from, Vector3 to)
+        {
+            if (root == null) return;
+            var dir = to - from;
+            float len = dir.Length();
+            if (len < 0.05f) return;
+            root.Position = (from + to) * 0.5f;
+            root.Basis = Basis.LookingAt(dir / len, Vector3.Up).Orthonormalized();
+            if (sleeve != null) sleeve.Scale = new Vector3(1f, len, 1f);
+            var glove = root.GetChildOrNull<MeshInstance3D>(1);
+            if (glove != null) glove.Position = new Vector3(0f, 0f, len / 2f - 0.025f);
+        }
+
+        private void CacheMuzzleMarker()
+        {
+            _muzzleMarker = null;
+            var wn = _weaponNodes.Count > _weaponIdx ? _weaponNodes[_weaponIdx] : null;
+            if (wn == null) return;
+            _muzzleMarker = wn.FindChildren("*", "Node3D", true, false)
+                .OfType<Node3D>()
+                .FirstOrDefault(n => n.Name.ToString().Contains("muzzle", StringComparison.OrdinalIgnoreCase));
         }
 
         private static AnimationPlayer? FindAnim(Node root)
@@ -1105,12 +1423,24 @@ namespace PatientZero
             _hpFill = new ColorRect { Color = TermGreen, Position = new Vector2(26, 46), Size = new Vector2(296, 12) };
             _ui.AddChild(_hpFill);
             MkLabel(UIR(), "SPECIMEN VITALS", new Vector2(24, 20), new Vector2(300, 20), 13, TermDim);
+            _damageIndicator = MkLabel(UIR(), "", new Vector2(24, 116), new Vector2(300, 28), 18, AlertRed);
+            _damageIndicator.Visible = false;
+            _hitOverlay = new ColorRect
+            {
+                Color = new Color(1f, 0.03f, 0.05f, 0f),
+                Size = new Vector2(1280, 720),
+                MouseFilter = Control.MouseFilterEnum.Ignore,
+                ZIndex = 40,
+            };
+            _ui.AddChild(_hitOverlay);
 
             // Wave / theme / score / badge
             _waveLabel = MkLabel(UIR(), "WAVE 01", new Vector2(490, 18), new Vector2(300, 40), 34, TermGreen, HorizontalAlignment.Center);
             _themeTag = MkLabel(UIR(), _theme.Label, new Vector2(440, 58), new Vector2(400, 20), 13, TermDim, HorizontalAlignment.Center);
             _scoreLabel = MkLabel(UIR(), "0", new Vector2(1030, 20), new Vector2(226, 34), 28, TermGreen, HorizontalAlignment.Right);
             _brainBadge = MkLabel(UIR(), "PZ-CORE // LOCAL", new Vector2(1030, 54), new Vector2(226, 20), 13, TermDim, HorizontalAlignment.Right);
+            _tacticLabel = MkLabel(UIR(), "PZ-TACTIC // SCANNING TARGETS", new Vector2(430, 92), new Vector2(420, 24), 13, new Color(1f, 0.62f, 0.2f), HorizontalAlignment.Center);
+            _tacticLabel.Visible = false;
 
             // Wave banner (center flash)
             _waveBanner = MkLabel(UIR(), "", new Vector2(340, 300), new Vector2(600, 90), 64, TermGreen, HorizontalAlignment.Center);
@@ -1125,7 +1455,7 @@ namespace PatientZero
             };
             _tauntPanel.AddThemeStyleboxOverride("panel", PanelStyle(new Color(0.012f, 0.04f, 0.024f, 0.88f), new Color(0.18f, 1f, 0.53f, 0.4f)));
             var tv = new VBoxContainer();
-            var who = new Label { Text = "▚ PATIENT ZERO // TRANSMISSION" };
+            var who = new Label { Text = "» PATIENT ZERO // TRANSMISSION" };
             who.AddThemeFontSizeOverride("font_size", 11);
             who.AddThemeColorOverride("font_color", AlertRed);
             tv.AddChild(who);
@@ -1149,21 +1479,24 @@ namespace PatientZero
             _ui.AddChild(_purgeBtn);
 
             // FIRE button (hold to shoot — touch-friendly)
-            _fireBtn = new Button { Text = "🔥 FIRE", Position = new Vector2(1066, 476), Size = new Vector2(190, 100) };
+            _fireBtn = new Button { Text = "» FIRE", Position = new Vector2(1050, 470), Size = new Vector2(206, 112), Visible = _mobileControls || !_screenshotMode };
             _fireBtn.AddThemeFontSizeOverride("font_size", 22);
             _fireBtn.ButtonDown += () => _fireHeld = true;
             _fireBtn.ButtonUp += () => _fireHeld = false;
+            _fireBtn.MouseFilter = Control.MouseFilterEnum.Stop;
+            _fireBtn.ZIndex = 50;
             StyleBtn(_fireBtn, 0.7f);
             _ui.AddChild(_fireBtn);
 
             // weapon switcher (top-center-left) + ammo counter
             var wbar = new HBoxContainer { Position = new Vector2(24, 68) };
             wbar.AddThemeConstantOverride("separation", 8);
-            string[] shortNames = { "1 · PISTOL", "2 · AR", "3 · SCATTER" };
+            string[] shortNames = { "1 · PISTOL", "2 · AKM", "3 · SCATTER" };
             for (int i = 0; i < 3; i++)
             {
                 var b = new Button { Text = shortNames[i], CustomMinimumSize = new Vector2(118, 40) };
                 b.AddThemeFontSizeOverride("font_size", 13);
+                StyleBtn(b, 0.5f);
                 int idx = i;
                 b.Pressed += () => SwitchWeapon(idx);
                 _weaponBtns.Add(b);
@@ -1235,7 +1568,7 @@ namespace PatientZero
             _bossBar = new PanelContainer { Position = new Vector2(340, 100), Size = new Vector2(600, 30), Visible = false, MouseFilter = Control.MouseFilterEnum.Ignore };
             _bossBar.AddThemeStyleboxOverride("panel", PanelStyle(new Color(0.05f, 0.01f, 0.02f, 0.75f), new Color(1f, 0.3f, 0.37f, 0.6f)));
             var bossRow = new HBoxContainer();
-            var bossLbl = new Label { Text = "▚ PATIENT ZERO // AVATAR INTEGRITY  " };
+            var bossLbl = new Label { Text = "» PATIENT ZERO // AVATAR INTEGRITY  " };
             bossLbl.AddThemeFontSizeOverride("font_size", 12);
             bossLbl.AddThemeColorOverride("font_color", AlertRed);
             bossRow.AddChild(bossLbl);
@@ -1248,14 +1581,52 @@ namespace PatientZero
             _bossBar.AddChild(bossRow);
             _ui.AddChild(_bossBar);
             _hpNum = MkLabel(UIR(), "100 / 100", new Vector2(24, 46), new Vector2(200, 18), 12, TermDim);
+            var bottomHp = new Panel
+            {
+                Position = new Vector2(390, 662),
+                Size = new Vector2(500, 42),
+                MouseFilter = Control.MouseFilterEnum.Ignore,
+                ZIndex = 45,
+            };
+            bottomHp.AddThemeStyleboxOverride("panel", PanelStyle(new Color(0.01f, 0.025f, 0.016f, 0.9f), new Color(0.18f, 1f, 0.53f, 0.6f)));
+            _ui.AddChild(bottomHp);
+            MkLabel(bottomHp, "VITALS", new Vector2(12, 0), new Vector2(78, 42), 13, TermDim);
+            var bottomHpBg = new ColorRect
+            {
+                Color = new Color(0f, 0f, 0f, 0.8f),
+                Position = new Vector2(88, 13),
+                Size = new Vector2(300, 16),
+                MouseFilter = Control.MouseFilterEnum.Ignore,
+            };
+            bottomHp.AddChild(bottomHpBg);
+            _bottomHpFill = new ColorRect
+            {
+                Color = TermGreen,
+                Position = new Vector2(90, 15),
+                Size = new Vector2(296, 12),
+                MouseFilter = Control.MouseFilterEnum.Ignore,
+            };
+            bottomHp.AddChild(_bottomHpFill);
+            _bottomHpNum = MkLabel(bottomHp, "100 / 100", new Vector2(398, 0), new Vector2(88, 42), 15, TermGreen, HorizontalAlignment.Right);
+            _medkitHint = MkLabel(UIR(), "", new Vector2(430, 620), new Vector2(420, 28), 14, TermGreen, HorizontalAlignment.Center);
+            _medkitHint.Visible = false;
 
             // virtual joysticks (mobile)
-            _ringTex = MakeRingTex(140, 0.36f, 0.5f, new Color(0.62f, 0.94f, 0.7f, 0.4f));
-            _discTex = MakeDiscTex(64, new Color(0.62f, 0.94f, 0.7f, 0.55f));
-            _joyBaseL = new TextureRect { Texture = _ringTex, Size = new Vector2(140, 140), Visible = false, MouseFilter = Control.MouseFilterEnum.Ignore };
-            _joyKnobL = new TextureRect { Texture = _discTex, Size = new Vector2(64, 64), Visible = false, MouseFilter = Control.MouseFilterEnum.Ignore };
-            _joyBaseR = new TextureRect { Texture = _ringTex, Size = new Vector2(140, 140), Visible = false, MouseFilter = Control.MouseFilterEnum.Ignore };
-            _joyKnobR = new TextureRect { Texture = _discTex, Size = new Vector2(64, 64), Visible = false, MouseFilter = Control.MouseFilterEnum.Ignore };
+            _ringTex = MakeRingTex(140, 0.34f, 0.5f, new Color(0.62f, 0.94f, 0.7f, 0.78f));
+            _discTex = MakeDiscTex(64, new Color(0.62f, 0.94f, 0.7f, 0.9f));
+            _joyBaseL = new TextureRect { Texture = _ringTex, Size = new Vector2(140, 140), Visible = _mobileControls, MouseFilter = Control.MouseFilterEnum.Ignore };
+            _joyKnobL = new TextureRect { Texture = _discTex, Size = new Vector2(64, 64), Visible = _mobileControls, MouseFilter = Control.MouseFilterEnum.Ignore };
+            _joyBaseR = new TextureRect { Texture = _ringTex, Size = new Vector2(140, 140), Visible = _mobileControls, MouseFilter = Control.MouseFilterEnum.Ignore };
+            _joyKnobR = new TextureRect { Texture = _discTex, Size = new Vector2(64, 64), Visible = _mobileControls, MouseFilter = Control.MouseFilterEnum.Ignore };
+            foreach (var control in new Control[] { _joyBaseL, _joyKnobL, _joyBaseR, _joyKnobR })
+                control.ZIndex = 50;
+            if (_mobileControls)
+            {
+                _joyBaseL.Position = new Vector2(98, 548);
+                _joyKnobL.Position = _joyBaseL.Position + new Vector2(38, 38);
+                _joyBaseR.Position = new Vector2(856, 548);
+                _joyKnobR.Position = _joyBaseR.Position + new Vector2(38, 38);
+            }
             _ui.AddChild(_joyBaseL); _ui.AddChild(_joyKnobL); _ui.AddChild(_joyBaseR); _ui.AddChild(_joyKnobR);
 
             // Camera mode button
@@ -1312,18 +1683,24 @@ namespace PatientZero
             _menuAccent = new ColorRect { Color = new Color(0.16f, 1f, 0.5f, 0.6f), Position = new Vector2(540, 214), Size = new Vector2(200, 2) };
             panel.AddChild(_menuAccent);
             MkLabel(panel, "P R O T O C O L", new Vector2(440, 200), new Vector2(400, 30), 20, TermDim, HorizontalAlignment.Center);
-            _startSpec = MkLabel(panel, "", new Vector2(440, 260), new Vector2(400, 30), 22, AlertRed, HorizontalAlignment.Center);
-            _startGreet = MkLabel(panel, "", new Vector2(290, 310), new Vector2(700, 70), 20, TermGreen, HorizontalAlignment.Center);
-            _startSeed = MkLabel(panel, "", new Vector2(340, 390), new Vector2(600, 24), 15, TermDim, HorizontalAlignment.Center);
-            _startBest = MkLabel(panel, "", new Vector2(340, 420), new Vector2(600, 24), 14, TermDim, HorizontalAlignment.Center);
+            MkLabel(panel, "» ADVERSARIAL AI DIRECTOR — IT STUDIES YOU. IT REMEMBERS YOU. IT REPORTS YOU.",
+                new Vector2(190, 246), new Vector2(900, 22), 13, new Color(0.3f, 1f, 0.55f, 0.75f), HorizontalAlignment.Center);
+            _startSpec = MkLabel(panel, "", new Vector2(440, 286), new Vector2(400, 30), 22, AlertRed, HorizontalAlignment.Center);
+            _startGreet = MkLabel(panel, "", new Vector2(290, 330), new Vector2(700, 70), 20, TermGreen, HorizontalAlignment.Center);
+            _startGreet.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+            _startSeed = MkLabel(panel, "", new Vector2(340, 404), new Vector2(600, 24), 15, TermDim, HorizontalAlignment.Center);
+            _startBest = MkLabel(panel, "", new Vector2(340, 432), new Vector2(600, 24), 14, TermDim, HorizontalAlignment.Center);
 
-            var btn = new Button { Text = "BEGIN EXPOSURE", Position = new Vector2(515, 480), Size = new Vector2(250, 64) };
+            var btn = new Button { Text = "BEGIN EXPOSURE", Position = new Vector2(515, 492), Size = new Vector2(250, 64) };
             btn.AddThemeFontSizeOverride("font_size", 20);
             btn.Pressed += StartRun;
+            StyleBtn(btn, 0.72f);
             panel.AddChild(btn);
 
-            MkLabel(panel, "WASD / LEFT THUMB — MOVE · MOUSE / RIGHT THUMB — AIM+FIRE · SPACE — PURGE\nIT STUDIES YOU. IT REMEMBERS YOU. IT REPORTS YOU.",
-                new Vector2(290, 580), new Vector2(700, 60), 13, TermDim, HorizontalAlignment.Center);
+            MkLabel(panel, "WASD — MOVE · MOUSE — AIM+FIRE · 1/2/3 — WEAPONS · R — RELOAD · SPACE — PURGE · C — CAMERA",
+                new Vector2(190, 584), new Vector2(900, 24), 13, TermDim, HorizontalAlignment.Center);
+            MkLabel(panel, "Waves 1-3: it observes. Wave 4+: it counters. Every 5th wave: a GATE opens.",
+                new Vector2(190, 612), new Vector2(900, 24), 13, new Color(1f, 0.45f, 0.5f, 0.8f), HorizontalAlignment.Center);
 
             _ui.AddChild(panel);
             _startPanel = panel;
@@ -1331,39 +1708,122 @@ namespace PatientZero
 
         private void BuildOverPanel()
         {
-            var panel = new Control { Name = "OverPanel", Visible = false };
-            var bg = new ColorRect { Color = new Color(0.02f, 0.02f, 0.025f, 0.94f), Size = new Vector2(1280, 720) };
+            var panel = new Control { Name = "OverPanel", Visible = false, MouseFilter = Control.MouseFilterEnum.Stop };
+            var bg = new ColorRect { Color = new Color(0.016f, 0.005f, 0.009f, 0.96f), Size = new Vector2(1280, 720) };
             panel.AddChild(bg);
 
-            MkLabel(panel, "SPECIMEN TERMINATED", new Vector2(190, 60), new Vector2(900, 50), 40, AlertRed, HorizontalAlignment.Center);
+            // slow red corruption pulse over everything
+            _oRedPulse = new ColorRect { Color = new Color(1f, 0.06f, 0.12f, 0.05f), Size = new Vector2(1280, 720), MouseFilter = Control.MouseFilterEnum.Ignore };
+            panel.AddChild(_oRedPulse);
 
-            var card = new PanelContainer { Position = new Vector2(340, 130), Size = new Vector2(600, 420) };
-            card.AddThemeStyleboxOverride("panel", PanelStyle(new Color(0.012f, 0.03f, 0.02f, 0.92f), new Color(1f, 0.3f, 0.37f, 0.5f)));
-            var v = new VBoxContainer();
-            v.AddThemeConstantOverride("separation", 6);
+            // red corner brackets — death frame (matches green in-game HUD brackets)
+            var rb = new Color(1f, 0.28f, 0.34f, 0.5f);
+            void Rbrack(float x, float y, bool fx, bool fy)
+            {
+                var h = new ColorRect { Color = rb, Position = new Vector2(x, y), Size = new Vector2(54, 4) };
+                var v = new ColorRect { Color = rb, Position = new Vector2(x, y), Size = new Vector2(4, 54) };
+                if (fx) h.Position = new Vector2(x - 50, y);
+                if (fy) v.Position = new Vector2(x, y - 50);
+                panel.AddChild(h); panel.AddChild(v);
+            }
+            Rbrack(20, 18, false, false); Rbrack(1260, 18, true, false);
+            Rbrack(20, 702, false, true); Rbrack(1260, 702, true, true);
 
-            _rRun = MkLabel(v, "", Vector2.Zero, new Vector2(560, 24), 16, TermDim);
-            _rSpec = MkLabel(v, "", Vector2.Zero, new Vector2(560, 24), 16, TermGreen);
-            _rWave = MkLabel(v, "", Vector2.Zero, new Vector2(560, 24), 16, TermGreen);
-            _rKills = MkLabel(v, "", Vector2.Zero, new Vector2(560, 24), 16, TermGreen);
-            _rArchetype = MkLabel(v, "", Vector2.Zero, new Vector2(560, 28), 22, AlertRed);
-            _rCause = MkLabel(v, "", Vector2.Zero, new Vector2(560, 40), 14, TermGreen);
-            _rWeak = MkLabel(v, "", Vector2.Zero, new Vector2(560, 24), 14, TermGreen);
-            var adaptRow = MkLabel(v, "", Vector2.Zero, new Vector2(560, 24), 14, TermDim);
-            _adaptFill = new ColorRect { Color = TermGreen, Position = new Vector2(0, 0), Size = new Vector2(0, 10), CustomMinimumSize = new Vector2(0, 10) };
-            v.AddChild(_adaptFill);
-            _rRemark = MkLabel(v, "", Vector2.Zero, new Vector2(560, 50), 16, TermGreen);
-            _rSource = MkLabel(v, "", Vector2.Zero, new Vector2(560, 20), 11, TermDim);
-            card.AddChild(v);
+            // archival frame header
+            _oArchive = MkLabel(panel, "» PZ-CORE // ARCHIVAL RECORD", new Vector2(36, 26), new Vector2(480, 22), 13, new Color(1f, 0.42f, 0.47f, 0.85f));
+            _oRec = MkLabel(panel, "[ REC ]", new Vector2(1174, 26), new Vector2(88, 24), 14, Color.FromHtml("#ff4655"), HorizontalAlignment.Right);
+
+            // giant rotated watermark behind the report card
+            _oWatermark = MkLabel(panel, "TERMINATED", new Vector2(240, 316), new Vector2(800, 96), 88, new Color(1f, 0.12f, 0.16f, 0.05f), HorizontalAlignment.Center);
+            _oWatermark.PivotOffset = new Vector2(400, 48);
+            _oWatermark.RotationDegrees = -8;
+
+            // glitch title: two misaligned chromatic copies under a pale-red core
+            var titleRect = new Vector2(187, 74);
+            var titleSize = new Vector2(906, 62);
+            _oGlitchA = MkLabel(panel, "SPECIMEN TERMINATED", titleRect + new Vector2(-3, -2), titleSize, 52, new Color(0.15f, 0.9f, 1f, 0.5f), HorizontalAlignment.Center);
+            _oGlitchB = MkLabel(panel, "SPECIMEN TERMINATED", titleRect + new Vector2(3, 2), titleSize, 52, new Color(1f, 0.12f, 0.1f, 0.5f), HorizontalAlignment.Center);
+            _oTitle = MkLabel(panel, "SPECIMEN TERMINATED", titleRect, titleSize, 52, new Color(1f, 0.88f, 0.9f), HorizontalAlignment.Center);
+            _oTitle.AddThemeColorOverride("font_outline_color", new Color(0.55f, 0.02f, 0.06f));
+            _oTitle.AddThemeConstantOverride("outline_size", 10);
+            _oGlitchBase = titleRect;
+            _oMeta = MkLabel(panel, "AWAITING AUTOPSY TRANSCRIPT…", new Vector2(340, 142), new Vector2(600, 24), 14, Color.FromHtml("#ff6b76"), HorizontalAlignment.Center);
+
+            // hazard divider under the title
+            var hav = new Color(1f, 0.25f, 0.32f, 0.6f);
+            var hz = new ColorRect { Color = hav, Position = new Vector2(560, 192), Size = new Vector2(160, 3) };
+            panel.AddChild(hz);
+            var hz2 = new ColorRect { Color = new Color(1f, 0.25f, 0.32f, 0.25f), Position = new Vector2(560 - 60, 200), Size = new Vector2(280, 1) };
+            panel.AddChild(hz2);
+
+            // report card
+            var card = new Panel { Position = new Vector2(300, 208), Size = new Vector2(680, 352), MouseFilter = Control.MouseFilterEnum.Stop };
+            card.AddThemeStyleboxOverride("panel", PanelStyle(new Color(0.05f, 0.01f, 0.015f, 0.94f), new Color(1f, 0.28f, 0.34f, 0.55f)));
             panel.AddChild(card);
 
-            var share = new Button { Text = "SHARE REPORT", Position = new Vector2(400, 580), Size = new Vector2(230, 58) };
+            // card header
+            _oRunLabel = MkLabel(card, "AUTOPSY REPORT — RUN --", new Vector2(0, 6), new Vector2(420, 22), 17, new Color(1f, 0.45f, 0.5f));
+            _oFileId = MkLabel(card, "FILE ID PZ-///", new Vector2(430, 10), new Vector2(250, 18), 11, TermDim, HorizontalAlignment.Right);
+            var div = new ColorRect { Color = new Color(1f, 0.28f, 0.34f, 0.3f), Position = new Vector2(0, 38), Size = new Vector2(680, 1) };
+            card.AddChild(div);
+
+            // specimen + archetype row
+            MkLabel(card, "SPECIMEN", new Vector2(0, 50), new Vector2(200, 16), 11, TermDim);
+            _oSpec = MkLabel(card, "--", new Vector2(0, 68), new Vector2(280, 26), 20, TermGreen);
+            MkLabel(card, "ARCHETYPE", new Vector2(350, 50), new Vector2(200, 16), 11, TermDim);
+            _oArchetype = MkLabel(card, "--", new Vector2(350, 68), new Vector2(330, 26), 20, Color.FromHtml("#ff4655"));
+
+            // stat grid
+            void StatBox(float x, string name)
+            {
+                var sb = new Panel { Position = new Vector2(x, 106), Size = new Vector2(196, 68), MouseFilter = Control.MouseFilterEnum.Ignore };
+                sb.AddThemeStyleboxOverride("panel", PanelStyle(new Color(0.02f, 0.006f, 0.01f, 0.55f), new Color(1f, 0.28f, 0.34f, 0.3f)));
+                MkLabel(sb, name, new Vector2(10, 6), new Vector2(176, 16), 11, TermDim);
+                card.AddChild(sb);
+            }
+            StatBox(0, "WAVES SURVIVED");  _oWaves = MkLabel(card, "0", new Vector2(10, 22), new Vector2(176, 40), 30, TermGreen);
+            StatBox(242, "HOSTS ELIMINATED"); _oKills = MkLabel(card, "0", new Vector2(252, 22), new Vector2(176, 40), 30, TermGreen);
+            StatBox(484, "FINAL SCORE"); _oScore = MkLabel(card, "0", new Vector2(494, 22), new Vector2(176, 40), 30, TermGreen);
+
+            // cause of termination strip
+            var causeBg = new Panel { Position = new Vector2(0, 188), Size = new Vector2(680, 40), MouseFilter = Control.MouseFilterEnum.Ignore };
+            causeBg.AddThemeStyleboxOverride("panel", PanelStyle(new Color(0.2f, 0.015f, 0.02f, 0.6f), new Color(1f, 0.28f, 0.34f, 0.45f)));
+            _oCause = MkLabel(causeBg, "CAUSE OF TERMINATION: --", new Vector2(12, 0), new Vector2(656, 40), 14, new Color(1f, 0.62f, 0.66f), HorizontalAlignment.Center);
+            card.AddChild(causeBg);
+
+            // weakness + adaptability rows
+            MkLabel(card, "WEAKNESS //", new Vector2(0, 244), new Vector2(130, 22), 12, TermDim);
+            _oWeak = MkLabel(card, "--", new Vector2(132, 242), new Vector2(380, 24), 13, TermGreen);
+            MkLabel(card, "ADAPTABILITY", new Vector2(0, 276), new Vector2(150, 20), 12, TermDim);
+            var abBg = new ColorRect { Color = new Color(0, 0, 0, 0.6f), Position = new Vector2(152, 280), Size = new Vector2(446, 12) };
+            card.AddChild(abBg);
+            _oAdaptFill = new ColorRect { Color = new Color(1f, 0.24f, 0.32f), Position = new Vector2(154, 282), Size = new Vector2(0, 8) };
+            card.AddChild(_oAdaptFill);
+            _oAdaptPct = MkLabel(card, "--%", new Vector2(606, 278), new Vector2(74, 20), 12, TermGreen, HorizontalAlignment.Right);
+
+            // closing divider + villain remark + source
+            var div2 = new ColorRect { Color = new Color(1f, 0.28f, 0.34f, 0.2f), Position = new Vector2(0, 302), Size = new Vector2(680, 1) };
+            card.AddChild(div2);
+            _oRemark = MkLabel(card, "", new Vector2(0, 308), new Vector2(680, 26), 14, TermGreen, HorizontalAlignment.Center);
+            _oSource = MkLabel(card, "", new Vector2(0, 334), new Vector2(680, 16), 10, TermDim, HorizontalAlignment.Center);
+            _oActionStatus = MkLabel(panel, "REPORT READY // SELECT AN ACTION", new Vector2(390, 566), new Vector2(500, 20), 11, TermDim, HorizontalAlignment.Center);
+
+            // buttons — green terminal like the rest of the HUD
+            var share = new Button { Text = "SHARE REPORT", Position = new Vector2(392, 590), Size = new Vector2(240, 56) };
+            share.AddThemeFontSizeOverride("font_size", 17);
             share.Pressed += ShareReport;
+            share.FocusMode = Control.FocusModeEnum.All;
+            StyleBtn(share);
             panel.AddChild(share);
-            var restart = new Button { Text = "RUN AGAIN", Position = new Vector2(660, 580), Size = new Vector2(230, 58) };
+            var restart = new Button { Text = "RUN AGAIN", Position = new Vector2(648, 590), Size = new Vector2(240, 56) };
+            restart.AddThemeFontSizeOverride("font_size", 18);
             restart.Pressed += () => GetTree().ReloadCurrentScene();
+            restart.FocusMode = Control.FocusModeEnum.All;
+            StyleBtnRed(restart);
             panel.AddChild(restart);
-            MkLabel(panel, "IT REMEMBERS YOU NEXT TIME.", new Vector2(440, 660), new Vector2(400, 24), 13, TermDim, HorizontalAlignment.Center);
+
+            MkLabel(panel, "ENTER — RUN AGAIN  ·  S — SHARE REPORT", new Vector2(390, 664), new Vector2(500, 20), 12, TermDim, HorizontalAlignment.Center);
+            MkLabel(panel, "SIGNAL INTEGRITY: 0.00% // FILE EXPUNGED ON NEXT BOOT", new Vector2(840, 664), new Vector2(420, 20), 11, new Color(1f, 0.35f, 0.4f, 0.7f), HorizontalAlignment.Right);
 
             _ui.AddChild(panel);
             _overPanel = panel;
@@ -1372,13 +1832,116 @@ namespace PatientZero
         // ==================================================================
         // GAME FLOW
         // ==================================================================
+        // ==================================================================
+        // INTRO CINEMATIC — full-screen transmission, skippable
+        // ==================================================================
+        private void BuildIntro()
+        {
+            if (_introSeen || _screenshotMode || _overShotMode || _menuShotMode) return;
+            VideoStreamTheora? stream = null;
+            if (ResourceLoader.Exists("res://assets/video/intro_cinematic.ogv"))
+                stream = ResourceLoader.Load<VideoStreamTheora>("res://assets/video/intro_cinematic.ogv");
+            if (stream == null) return;
+
+            var overlay = new Control { Name = "IntroOverlay", MouseFilter = Control.MouseFilterEnum.Stop };
+            overlay.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+            var bg = new ColorRect { Color = Colors.Black, MouseFilter = Control.MouseFilterEnum.Ignore };
+            bg.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+            overlay.AddChild(bg);
+
+            var vp = new VideoStreamPlayer { Stream = stream, Expand = true, Autoplay = true };
+            vp.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+            vp.Finished += EndIntro;
+            overlay.AddChild(vp);
+
+            MkLabel(overlay, "» INCOMING TRANSMISSION // PLAYBACK 30s", new Vector2(36, 26), new Vector2(620, 24), 13,
+                new Color(0.3f, 1f, 0.55f, 0.85f));
+            var skip = new Button { Text = "SKIP ▸", Position = new Vector2(1106, 648), Size = new Vector2(146, 46) };
+            skip.AddThemeFontSizeOverride("font_size", 17);
+            StyleBtn(skip, 0.6f);
+            skip.Pressed += EndIntro;
+            overlay.AddChild(skip);
+
+            _ui.AddChild(overlay);
+            _introVideo = vp;
+            _introOverlay = overlay;
+        }
+
+        private void EndIntro()
+        {
+            if (_introOverlay == null) return;
+            _introSeen = true;
+            _introVideo?.Stop();
+            _introOverlay.QueueFree();
+            _introOverlay = null;
+            _introVideo = null;
+            if (_phase == Phase.Menu && _storyOverlay == null) BuildStoryIntro();
+        }
+
+        // ==================================================================
+        // STORY INTRO — typewriter broadcast (Subject #1, per research paper)
+        // ==================================================================
+        private void BuildStoryIntro()
+        {
+            if (_storyOverlay != null) return;
+            _storyLines = Story.IntroLines(_bucket);
+
+            var overlay = new Control { Name = "StoryOverlay", MouseFilter = Control.MouseFilterEnum.Stop };
+            overlay.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+            var bg = new ColorRect { Color = new Color(0.012f, 0.014f, 0.01f, 0.97f), MouseFilter = Control.MouseFilterEnum.Ignore };
+            bg.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+            overlay.AddChild(bg);
+
+            MkLabel(overlay, "» PZ-CORE // BROADCAST 001", new Vector2(36, 26), new Vector2(500, 24), 13,
+                new Color(0.3f, 1f, 0.55f, 0.85f));
+
+            _storyText = MkLabel(overlay, "", new Vector2(160, 250), new Vector2(960, 220), 26,
+                new Color(0.72f, 1f, 0.82f), HorizontalAlignment.Center);
+            _storyText.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+
+            var skip = new Button { Text = "SKIP ▸", Position = new Vector2(1106, 648), Size = new Vector2(146, 46) };
+            skip.AddThemeFontSizeOverride("font_size", 17);
+            StyleBtn(skip, 0.6f);
+            skip.Pressed += EndStory;
+            overlay.AddChild(skip);
+
+            _ui.AddChild(overlay);
+            _storyOverlay = overlay;
+            _storyLine = 0;
+            _storyT = 0;
+        }
+
+        private void TickStory(float dt)
+        {
+            if (_storyOverlay == null || _storyText == null) return;
+            _storyT += dt;
+            string line = _storyLines[Mathf.Clamp(_storyLine, 0, _storyLines.Length - 1)];
+            int chars = Mathf.Clamp((int)(_storyT * 34f), 0, line.Length);
+            _storyText.Text = line.Substring(0, chars) + (chars < line.Length ? "▌" : "");
+            if (chars >= line.Length && _storyT * 34f > line.Length + 34f * 1.6f) // ~1.6s hold after line
+            {
+                _storyLine++;
+                _storyT = 0;
+                if (_storyLine >= _storyLines.Length) { EndStory(); return; }
+            }
+        }
+
+        private void EndStory()
+        {
+            if (_storyOverlay == null) return;
+            _storyOverlay.QueueFree();
+            _storyOverlay = null;
+            _storyText = null;
+            if (_phase == Phase.Menu) _startPanel.Visible = true;
+        }
+
         private void ShowStart()
         {
-            _startSpec.Text = $"SPECIMEN #{_profile.SpecimenNumber:000}";
-            _startGreet.Text = PatientZeroBrain.Greeting(_profile);
+            _startSpec.Text = $"SUBJECT #{_profile.SpecimenNumber:000} · {Story.StrainName(_bucket)}";
+            _startGreet.Text = Story.SubjectGreeting(_profile.SpecimenNumber, _profile.RunCount);
             _startSeed.Text = _seedLabel;
             _startBest.Text = _profile.BestWave > 0 ? $"BEST: WAVE {_profile.BestWave} · {_profile.BestScore} PTS" : "NO PRIOR DATA ON FILE";
-            _startPanel.Visible = true;
+            _startPanel.Visible = _introOverlay == null && _storyOverlay == null;
             _overPanel.Visible = false;
         }
 
@@ -1386,6 +1949,10 @@ namespace PatientZero
         {
             if (_phase == Phase.Playing) return;
             _phase = Phase.Playing;
+            if (_introOverlay != null) EndIntro();
+            if (_storyOverlay != null) EndStory();
+            _fireHeld = false;
+            _mouseDown = false;
             _startPanel.Visible = false;
             _time = 0; _wave = 0; _score = 0; _kills = 0;
             _history.Clear();
@@ -1398,6 +1965,8 @@ namespace PatientZero
             _decals.Clear(); _bloodMats.Clear();
             foreach (var b in _bulletNodes) b.node.QueueFree();
             _bulletNodes.Clear();
+            if (_medkitNode != null && IsInstanceValid(_medkitNode)) _medkitNode.QueueFree();
+            _medkitNode = null;
             _player.Pos = new Vector2(0, 6);
             _player.Hp = Config.PlayerMaxHp;
             _scoreLabel.Text = "0";
@@ -1408,7 +1977,13 @@ namespace PatientZero
             _weaponIdx = 1;
             for (int i = 0; i < _ammo.Length && i < Config.Weapons.Length; i++) _ammo[i] = Config.Weapons[i].Mag;
             _reloading = false;
-            for (int i = 0; i < _weaponNodes.Count; i++) if (_weaponNodes[i] != null) _weaponNodes[i]!.Visible = i == _weaponIdx;
+            for (int i = 0; i < _weaponNodes.Count; i++)
+                if (_weaponNodes[i] != null)
+                {
+                    _weaponNodes[i]!.Visible = i == _weaponIdx;
+                    SetRest(_weaponNodes[i]!, i);
+                }
+            CacheMuzzleMarker();
             UpdateWeaponHud();
             _mouseLookActive = false;
             StartWave(1, Config.Wave1Bias(_bucket), ZoneName.Balanced);
@@ -1417,6 +1992,7 @@ namespace PatientZero
         private void StartWave(int n, WaveComp comp, ZoneName zone)
         {
             _wave = n;
+            SpawnMedkit();
             _waveLabel.Text = $"WAVE {n:00}";
             _waveBanner.Text = $"WAVE {n:00}";
             _waveBanner.Visible = true;
@@ -1439,21 +2015,98 @@ namespace PatientZero
                 var z = useBias ? zone : zones[(int)(GD.Randi() % zones.Count)];
                 var pts = Config.ZoneSpawns[z];
                 var basePt = pts[(int)(GD.Randi() % pts.Length)];
-                _spawnQueue.Add((_time + i * Config.SpawnStagger, types[i],
-                    basePt + new Vector2((float)GD.RandRange(-1.5, 1.5), (float)GD.RandRange(-1.5, 1.5))));
+                var pt = basePt + new Vector2((float)GD.RandRange(-1.5, 1.5), (float)GD.RandRange(-1.5, 1.5));
+                // never spawn in the player's face — push out to a 10-12u ring
+                var fromP = pt - _player.Pos;
+                if (fromP.Length() < 9f)
+                {
+                    var push = fromP.LengthSquared() > 0.01f ? fromP.Normalized()
+                        : new Vector2((float)GD.RandRange(-1, 1), (float)GD.RandRange(-1, 1)).Normalized();
+                    pt = _player.Pos + push * (float)GD.RandRange(10f, 12.5f);
+                    pt.X = Mathf.Clamp(pt.X, -Config.WorldW / 2 + 2f, Config.WorldW / 2 - 2f);
+                    pt.Y = Mathf.Clamp(pt.Y, -Config.WorldH / 2 + 2f, Config.WorldH / 2 - 2f);
+                }
+                _spawnQueue.Add((_time + i * Config.SpawnStagger, types[i], pt));
             }
             _logger.Reset();
 
-            // PATIENT ZERO MANIFESTS — boss avatar every 3rd wave
-            if (_forceBoss || n % 3 == 0)
+            // story beat — grounded narrative per wave (paper §7: facts → narrative)
+            string lastArchetype = _history.Count > 0 ? PatientZeroBrain.ClassifyArchetype(_history) : "";
+            if (n <= 4 || n % 5 == 0 || n % 7 == 0)
+                ShowTaunt(Story.WaveBeat(n, lastArchetype, _bucket),
+                    _history.Count > 0 ? Story.TelemetryRemark(_history[^1]) : "» cold start — neutral composition (paper §10)");
+
+            // GATE BOSS — every 5th wave (paper §3.1: "Every fifth wave introduces a Gate Boss")
+            if (_forceBoss || n % 5 == 0)
             {
                 float lastT = _spawnQueue.Count > 0 ? _spawnQueue[^1].at : _time;
                 _spawnQueue.Add((lastT + 1.2f, EnemyType.Boss, new Vector2(0, -10)));
-                _waveBanner.Text = $"WAVE {n:00} — IT MANIFESTS";
-                ShowTaunt("Enough. I will attend to this specimen personally.", "» PATIENT ZERO MANIFESTS — boss engagement");
+                _waveBanner.Text = $"WAVE {n:00} — GATE {n / 5} OPEN";
                 PlaySfx("boss");
                 _bossActive = true;
             }
+        }
+
+        private void SpawnMedkit()
+        {
+            if (_medkitNode != null && IsInstanceValid(_medkitNode)) _medkitNode.QueueFree();
+            _medkitNode = new Node3D { Name = $"Medkit_Wave_{_wave}", Position = new Vector3(_player.Pos.X + 2.2f, 0.08f, _player.Pos.Y + 1.4f) };
+            var boxMat = new StandardMaterial3D
+            {
+                AlbedoColor = new Color(0.92f, 0.96f, 0.9f),
+                EmissionEnabled = true,
+                Emission = new Color(0.35f, 1f, 0.55f),
+                EmissionEnergyMultiplier = 1.8f,
+                Roughness = 0.45f,
+            };
+            var box = new MeshInstance3D
+            {
+                Mesh = new BoxMesh { Size = new Vector3(0.62f, 0.2f, 0.42f) },
+                MaterialOverride = boxMat,
+            };
+            _medkitNode.AddChild(box);
+            var crossMat = new StandardMaterial3D
+            {
+                AlbedoColor = AlertRed,
+                EmissionEnabled = true,
+                Emission = AlertRed,
+                EmissionEnergyMultiplier = 2.5f,
+                ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+            };
+            var crossV = new MeshInstance3D
+            {
+                Mesh = new BoxMesh { Size = new Vector3(0.12f, 0.025f, 0.34f) },
+                MaterialOverride = crossMat,
+                Position = new Vector3(0, 0.115f, 0),
+            };
+            var crossH = new MeshInstance3D
+            {
+                Mesh = new BoxMesh { Size = new Vector3(0.34f, 0.025f, 0.12f) },
+                MaterialOverride = crossMat,
+                Position = new Vector3(0, 0.116f, 0),
+            };
+            _medkitNode.AddChild(crossV);
+            _medkitNode.AddChild(crossH);
+            _fxRoot.AddChild(_medkitNode);
+            _medkitHint.Text = "MEDKIT DEPLOYED // WALK OVER IT TO RESTORE 35 HP";
+            _medkitHint.Visible = true;
+            _medkitPulse = 0f;
+        }
+
+        private void CollectMedkit()
+        {
+            if (_medkitNode == null || !IsInstanceValid(_medkitNode)) return;
+            float restored = Mathf.Min(35f, Config.PlayerMaxHp - _player.Hp);
+            if (restored <= 0f) return;
+            _player.Hp += restored;
+            UpdateHp();
+            PlaySfx("purge");
+            SpawnBurst(new Vector3(_player.Pos.X, 0.8f, _player.Pos.Y), TermGreen, 18, 3.5f);
+            _medkitNode.QueueFree();
+            _medkitNode = null;
+            _medkitHint.Text = $"+{Mathf.RoundToInt(restored)} HP // VITALS RESTORED";
+            _medkitHint.Modulate = TermGreen;
+            GetTree().CreateTimer(2.2).Timeout += () => { if (IsInstanceValid(_medkitHint)) _medkitHint.Visible = false; };
         }
 
         private void EndWave()
@@ -1527,7 +2180,7 @@ namespace PatientZero
                 node = NormalizeModel(scene.Instantiate<Node3D>(), targetH);
                 node.Scale = Vector3.One * ModelScale[type] * 0.05f; // spawn scale-in
                 ap = FindAnim(node);
-                if (ap != null) PlayAnim(ap, "Walk", type == EnemyType.Fast ? 1.5f : 1f);
+                if (ap != null) PlayAnim(ap, "Walk", type == EnemyType.Fast ? 1.35f : type == EnemyType.Tanky ? 0.42f : 0.58f);
                 // villain model keeps its original dark materials — no theme tint
             }
             else
@@ -1641,6 +2294,17 @@ namespace PatientZero
             var p = _player;
             var w = Config.Weapons[_weaponIdx];
             var dir = p.Aim.Normalized();
+            var muzzleW = _muzzleMarker != null && _camMode != CamMode.Fpp && IsInstanceValid(_muzzleMarker)
+                ? _muzzleMarker.GlobalPosition
+                : new Vector3(p.Pos.X + dir.X * 0.8f, 1.15f, p.Pos.Y + dir.Y * 0.8f);
+            if (_camMode == CamMode.Fpp)
+            {
+                var vmMuz = _vmNodes.Count > _weaponIdx ? _vmNodes[_weaponIdx] : null;
+                var marker = vmMuz?.FindChildren("*", "Node3D", true, false).OfType<Node3D>()
+                    .FirstOrDefault(n => n.Name.ToString().Contains("muzzle", StringComparison.OrdinalIgnoreCase));
+                muzzleW = marker != null ? marker.GlobalPosition
+                    : new Vector3(p.Pos.X + dir.X * 0.6f, 1.5f, p.Pos.Y + dir.Y * 0.6f);
+            }
             for (int i = 0; i < w.Pellets; i++)
             {
                 var d = dir;
@@ -1653,7 +2317,7 @@ namespace PatientZero
                 }
                 var proj = new Projectile
                 {
-                    Pos = p.Pos + d * 0.9f,
+                    Pos = new Vector2(muzzleW.X, muzzleW.Z),
                     Vel = d * w.Speed,
                     Damage = w.Damage,
                 };
@@ -1666,47 +2330,71 @@ namespace PatientZero
                     Emission = w.BulletColor,
                     EmissionEnergyMultiplier = 3.2f,
                 };
-                // flame bolt: stretched emissive core + fire trail + light
-                var boltNode = new Node3D { Position = new Vector3(proj.Pos.X, 0.95f, proj.Pos.Y) };
-                boltNode.LookAt(boltNode.Position + new Vector3(d.X, 0, d.Y), Vector3.Up);
+                // Orange FIRE tracer: a rotating emissive core with a hot particle trail.
+                var boltNode = new Node3D { Position = muzzleW };
+                boltNode.Basis = Basis.LookingAt(new Vector3(d.X, 0, d.Y).Normalized(), Vector3.Up); // static — no tree needed
                 var core = new MeshInstance3D
                 {
-                    Mesh = new SphereMesh { Radius = w.Pellets > 1 ? 0.09f : 0.12f, Height = 0.24f },
+                    Mesh = new SphereMesh { Radius = w.Pellets > 1 ? 0.075f : 0.105f, Height = 0.28f },
                     MaterialOverride = mat,
-                    Scale = new Vector3(1f, 1f, 2.4f),
+                    Scale = new Vector3(0.8f, 0.8f, 3.8f),
                 };
                 boltNode.AddChild(core);
                 var flame = new CpuParticles3D
                 {
                     Emitting = true,
-                    Amount = 14,
-                    Lifetime = 0.22f,
+                    Amount = 28,
+                    Lifetime = 0.3f,
                     LocalCoords = false,
-                    Spread = 22f,
-                    InitialVelocityMin = 0.3f,
-                    InitialVelocityMax = 1.2f,
-                    Gravity = new Vector3(0, 1.6f, 0),
-                    ScaleAmountMin = 0.06f,
-                    ScaleAmountMax = 0.18f,
-                    Color = new Color(w.BulletColor.R, w.BulletColor.G, w.BulletColor.B, 0.85f),
+                    Spread = 30f,
+                    InitialVelocityMin = 0.8f,
+                    InitialVelocityMax = 2.4f,
+                    Gravity = new Vector3(0, 2.5f, 0),
+                    ScaleAmountMin = 0.05f,
+                    ScaleAmountMax = 0.2f,
+                    Color = new Color(1f, 0.38f, 0.06f, 0.92f),
                     Mesh = new SphereMesh { Radius = 0.07f, Height = 0.14f },
                 };
                 boltNode.AddChild(flame);
-                var blight = new OmniLight3D { LightColor = w.BulletColor, LightEnergy = 1.3f, OmniRange = 4f };
+                var blight = new OmniLight3D { LightColor = new Color(1f, 0.4f, 0.08f), LightEnergy = 2.2f, OmniRange = 5f };
                 boltNode.AddChild(blight);
                 _fxRoot.AddChild(boltNode);
                 _bulletNodes.Add((boltNode, proj));
             }
             PlaySfx(w.Sound);
-            _muzzleLight.LightEnergy = 2.4f;
-            _muzzleLight.LightColor = w.BulletColor;
-            _muzzleLight.Position = new Vector3(p.Pos.X + dir.X * 0.8f, 1.1f, p.Pos.Y + dir.Y * 0.8f);
+            _muzzleLight.LightEnergy = 4.8f;
+            _muzzleLight.LightColor = new Color(1f, 0.4f, 0.08f);
+            if (_camMode == CamMode.Fpp)
+            {
+                _vmRecoil = 1f;
+                _pitch = Mathf.Min(_pitch + 0.007f, 0.6f);
+            }
+            _muzzleLight.Position = muzzleW;
+            var flash = new CpuParticles3D
+            {
+                OneShot = true,
+                Emitting = true,
+                Amount = 24,
+                Lifetime = 0.16f,
+                Explosiveness = 0.95f,
+                Direction = new Vector3(dir.X, 0f, dir.Y),
+                Spread = 16f,
+                InitialVelocityMin = 1.8f,
+                InitialVelocityMax = 4.2f,
+                ScaleAmountMin = 0.08f,
+                ScaleAmountMax = 0.24f,
+                Color = new Color(1f, 0.5f, 0.08f, 0.98f),
+                Position = muzzleW,
+                Mesh = new SphereMesh { Radius = 0.055f, Height = 0.18f },
+            };
+            flash.Finished += () => flash.QueueFree();
+            _fxRoot.AddChild(flash);
             // gun kick
             var wn = _weaponNodes.Count > _weaponIdx ? _weaponNodes[_weaponIdx] : null;
             if (wn != null)
             {
-                var restPos = _weaponBoneSpace ? new Vector3(0.02f, -0.16f, 0.05f) : new Vector3(0.28f, 1.0f, 0.22f);
-                var kickPos = _weaponBoneSpace ? new Vector3(0.02f, -0.11f, 0.05f) : new Vector3(0.28f, 1.0f, 0.13f);
+                var restPos = RestTransform(_weaponIdx).Pos;
+                var kickPos = restPos + new Vector3(0f, 0.015f, -0.045f);
                 wn.Position = kickPos;
                 _kickTween?.Kill();
                 _kickTween = CreateTween();
@@ -1775,6 +2463,10 @@ namespace PatientZero
             p.HitFlash = 1;
             PlaySfx("hurt");
             _shake = Mathf.Min(_shake + 0.3f, 0.7f);
+            _hitOverlayT = 0.42f;
+            _hitOverlay.Color = new Color(1f, 0.03f, 0.05f, 0.24f);
+            _damageIndicator.Text = $"-{Mathf.RoundToInt(dmg)} HP";
+            _damageIndicator.Visible = true;
             UpdateHp();
             if (p.Hp <= 0) OnPlayerDeath();
         }
@@ -1785,6 +2477,16 @@ namespace PatientZero
             _hpFill.Size = new Vector2(296 * pct, 12);
             _hpFill.Color = pct < 0.3f ? AlertRed : TermGreen;
             if (_hpNum != null) _hpNum.Text = $"{Mathf.CeilToInt(Mathf.Max(0, _player.Hp))} / {(int)Config.PlayerMaxHp}";
+            if (_bottomHpFill != null)
+            {
+                _bottomHpFill.Size = new Vector2(296 * pct, 12);
+                _bottomHpFill.Color = pct < 0.3f ? AlertRed : pct < 0.6f ? new Color(1f, 0.65f, 0.18f) : TermGreen;
+            }
+            if (_bottomHpNum != null)
+            {
+                _bottomHpNum.Text = $"{Mathf.CeilToInt(Mathf.Max(0, _player.Hp))} / {(int)Config.PlayerMaxHp}";
+                _bottomHpNum.AddThemeColorOverride("font_color", pct < 0.3f ? AlertRed : TermGreen);
+            }
         }
 
         private void OnPlayerDeath()
@@ -1794,12 +2496,65 @@ namespace PatientZero
             _purgeBtn.Visible = false;
             ApplyMouseMode();
             _crosshair.Visible = false;
+            if (_vmHolder != null) _vmHolder.Visible = false;
+            // arm aim-lock stops writing on death — the death animation takes the bones back
             SpawnBurst(new Vector3(_player.Pos.X, 0.8f, _player.Pos.Y), AlertRed, 40, 8f);
             _playerNode.Visible = false;
             PlaySfx("over");
             _bossActive = false;
+            ShowOverPanel();
             _pendingAutopsy = Task.Run(async () =>
                 await PatientZeroBrain.Autopsy(_history, _profile, _wave, _kills, _score));
+        }
+
+        private void ShowOverPanel()
+        {
+            _overPanel.Visible = true;
+            _oMeta.Text = "AWAITING AUTOPSY TRANSCRIPT…";
+            _oSpec.Text = "--";
+            _oArchetype.Text = "--";
+            _oWaves.Text = _wave.ToString();
+            _oKills.Text = _kills.ToString();
+            _oScore.Text = _score.ToString();
+            _oCause.Text = "CAUSE OF TERMINATION: STREAMING…";
+            _oWeak.Text = "--";
+            _oRemark.Text = "";
+            _oSource.Text = "STREAMING FROM PZ-CORE…";
+            _oAdaptPct.Text = "--%";
+            _oAdaptFill.Size = new Vector2(0, 8);
+            _oAdaptT = -1;
+            _oActionStatus.Text = "AUTOPSY COMPLETE // SELECT AN ACTION";
+        }
+
+        private void UpdateOverFx(float dt)
+        {
+            _oGlitchT += dt;
+            float jx = 0, jy = 0;
+            // brief bursts of jitter, like a corrupted signal
+            if (Mathf.PosMod(_oGlitchT, 0.31f) < 0.05f)
+            {
+                jx = (float)GD.RandRange(-7, 7);
+                jy = (float)GD.RandRange(-3, 3);
+            }
+            _oGlitchA.Position = _oGlitchBase + new Vector2(jx - 3, jy - 2);
+            _oGlitchB.Position = _oGlitchBase + new Vector2(jx + 3, jy + 2);
+            _oTitle.Position = _oGlitchBase + new Vector2(jx, jy);
+            _oTitle.Modulate = new Color(1, 1, 1, 0.86f + 0.14f * Mathf.Sin(_oGlitchT * 3.1f));
+
+            _oRec.Modulate = Mathf.Sin(_oGlitchT * 4f) > 0f ? new Color(1, 1, 1, 1f) : new Color(1, 1, 1, 0.25f);
+
+            _oRedPulse.Modulate = new Color(1, 1, 1, 0.05f + 0.035f * Mathf.Sin(_oGlitchT * 1.3f));
+
+            if (_oWatermark != null) _oWatermark.RotationDegrees = -8f + 2.5f * Mathf.Sin(_oGlitchT * 0.8f);
+
+            if (_oAdaptT >= 0)
+            {
+                _oAdaptT += dt * 0.5f;
+                float k = Mathf.Clamp(_oAdaptT, 0f, 1f);
+                k = 1f - (1f - k) * (1f - k);
+                _oAdaptFill.Size = new Vector2(_oAdaptTarget * k, 8);
+                if (k >= 1f) _oAdaptT = -1;
+            }
         }
 
         private void OnAutopsyReady((AutopsyReport report, string archetypeKey) r)
@@ -1815,25 +2570,37 @@ namespace PatientZero
             }, _history);
             _lastReport = report;
 
-            _rRun.Text = $"▚ AUTOPSY REPORT — RUN {_profile.RunCount:00}";
-            _rSpec.Text = $"SPECIMEN #{_profile.SpecimenNumber:000}";
-            _rWave.Text = $"WAVES SURVIVED: {_wave}";
-            _rKills.Text = $"KILLS / SCORE: {_kills} / {_score}";
-            _rArchetype.Text = $"ARCHETYPE: {report.Archetype.ToUpperInvariant()}";
-            _rCause.Text = $"CAUSE OF DEATH: {report.CauseOfDeath}";
-            _rWeak.Text = $"WEAKNESS: {report.Weakness}";
-            _adaptFill.CustomMinimumSize = new Vector2(560 * Mathf.Clamp(report.AdaptabilityIndex, 0f, 1f), 10);
-            _adaptFill.Size = new Vector2(560 * Mathf.Clamp(report.AdaptabilityIndex, 0f, 1f), 10);
-            _rRemark.Text = $"\"{report.ClosingRemark}\"";
-            _rSource.Text = report.Source == "gemini" ? "REPORT AUTHORED BY GEMINI FLASH" : "REPORT AUTHORED BY PZ-CORE (LOCAL MODEL)";
-            _overPanel.Visible = true;
+            _oRunLabel.Text = $"AUTOPSY REPORT — RUN {_profile.RunCount:00}";
+            _oFileId.Text = $"FILE ID PZ-{_profile.SpecimenNumber:000}";
+            _oMeta.Text = $"TERMINATION CONFIRMED — {report.Archetype.ToUpperInvariant()} CLASSIFIED";
+            _oSpec.Text = $"#{_profile.SpecimenNumber:000}";
+            _oArchetype.Text = report.Archetype.ToUpperInvariant();
+            _oWaves.Text = _wave.ToString();
+            _oKills.Text = _kills.ToString();
+            _oScore.Text = _score.ToString();
+            _oCause.Text = $"CAUSE OF TERMINATION: {report.CauseOfDeath}";
+            _oWeak.Text = report.Weakness;
+            _oRemark.Text = $"“{report.ClosingRemark}”";
+            _oSource.Text = report.Source == "gemini"
+                ? $"TRANSCRIPT AUTHORED BY GEMINI FLASH // ROUTED THROUGH PZ-CORE · {DateTime.UtcNow:HH:mm:ss}Z"
+                : $"TRANSCRIPT AUTHORED BY PZ-CORE // LOCAL MODEL · {DateTime.UtcNow:HH:mm:ss}Z";
+            _oAdaptPct.Text = $"{Mathf.RoundToInt(Mathf.Clamp(report.AdaptabilityIndex, 0f, 1f) * 100f)}%";
+            _oAdaptFill.Size = new Vector2(0, 8);
+            _oAdaptTarget = 442f * Mathf.Clamp(report.AdaptabilityIndex, 0f, 1f);
+            _oAdaptT = 0f;
+            PlaySfx("hit");
         }
 
         private void ShareReport()
         {
-            if (_lastReport == null) return;
+            if (_lastReport == null)
+            {
+                _oActionStatus.Text = "REPORT NOT READY // WAITING FOR TRANSCRIPT";
+                return;
+            }
             DisplayServer.ClipboardSet(
                 PatientZeroBrain.BuildShareText(_profile, _wave, _kills, _score, _lastReport));
+            _oActionStatus.Text = "REPORT COPIED TO CLIPBOARD";
         }
 
         // ==================================================================
@@ -1856,12 +2623,29 @@ namespace PatientZero
         // ==================================================================
         public override void _UnhandledInput(InputEvent e)
         {
+            // intro cinematic + story broadcast swallow input; Enter/Space/Esc skips
+            if (_introOverlay is { Visible: true } || _storyOverlay is { Visible: true })
+            {
+                if (e is InputEventKey k && k.Pressed && !k.Echo &&
+                    (k.PhysicalKeycode == Key.Enter || k.PhysicalKeycode == Key.Space || k.PhysicalKeycode == Key.Escape))
+                {
+                    if (_introOverlay != null) EndIntro();
+                    else EndStory();
+                }
+                return;
+            }
+
             if (e is InputEventScreenTouch touch)
             {
                 if (touch.Pressed)
                 {
-                    bool aim = touch.Position.X > 640;
-                    _touches[touch.Index] = (touch.Position, touch.Position, aim);
+                    var vp = GetViewport().GetVisibleRect().Size;
+                    var scale = vp / new Vector2(1280, 720);
+                    var stickCenter = new Vector2(168, 618) * scale;
+                    // Mobile has one movement stick on the left. The FIRE button
+                    // owns the right side, so right-side touches never become aim sticks.
+                    if (touch.Position.X <= vp.X * 0.5f)
+                        _touches[touch.Index] = (stickCenter, touch.Position, false);
                 }
                 else _touches.Remove(touch.Index);
             }
@@ -1904,6 +2688,8 @@ namespace PatientZero
                 if (kb.PhysicalKeycode == Key.Enter && _phase == Phase.Menu) StartRun();
                 if (kb.PhysicalKeycode == Key.Enter && _phase == Phase.Over && _overPanel.Visible)
                     GetTree().ReloadCurrentScene();
+                if (kb.PhysicalKeycode == Key.S && _phase == Phase.Over && _overPanel.Visible)
+                    ShareReport();
                 if (kb.PhysicalKeycode == Key.C) CycleCamMode();
                 if (kb.PhysicalKeycode == Key.Escape) Input.MouseMode = Input.MouseModeEnum.Visible;
                 if (_phase == Phase.Playing)
@@ -1977,6 +2763,8 @@ namespace PatientZero
                 var d = w - p.Pos;
                 if (d.Length() > 0.2f) return (d.Normalized(), true);
             }
+            if (_mobileControls && _fireHeld)
+                return (p.Aim, true);
             if (_mouseDown)
             {
                 var w = ScreenToGround(_mousePos);
@@ -2011,11 +2799,22 @@ namespace PatientZero
         // ==================================================================
         // MAIN LOOP
         // ==================================================================
+        /// <summary>Unbuffered debug line to /tmp/pz_debug.log (GD.Print is block-buffered when redirected).</summary>
+        private static void Dbg(string s)
+        {
+            GD.Print(s);
+            try { System.IO.File.AppendAllText("/tmp/pz_debug.log", s + "\n"); } catch { }
+        }
+
         public override void _Process(double delta)
         {
             float dt = Mathf.Min((float)delta, 0.05f);
             _time += dt;
             var p = _player;
+            if (_screenshotMode && (int)_time != (int)(_time - dt)) Dbg($"[TICK] t={_time:F0} phase={_phase} enemies={_enemies.Count}");
+
+            // story broadcast typewriter
+            if (_storyOverlay != null) TickStory(dt);
 
             // dynamic music crossfade — boss theme when Patient Zero manifests
             if (_bossActive != _bossMusicOn && _bgm != null && _bgmBoss != null)
@@ -2028,16 +2827,36 @@ namespace PatientZero
             }
 
             UpdateEnemyBars();
+            UpdateTacticHint();
+            if (_medkitNode != null && IsInstanceValid(_medkitNode))
+            {
+                _medkitPulse += dt;
+                _medkitNode.Position = new Vector3(_medkitNode.Position.X, 0.08f + Mathf.Sin(_medkitPulse * 3.5f) * 0.05f, _medkitNode.Position.Z);
+                _medkitNode.Rotation = new Vector3(0f, _medkitPulse * 0.8f, 0f);
+                if (_player.Pos.DistanceTo(new Vector2(_medkitNode.Position.X, _medkitNode.Position.Z)) < 0.85f)
+                    CollectMedkit();
+            }
+            if (_hitOverlayT > 0f)
+            {
+                _hitOverlayT = Mathf.Max(0f, _hitOverlayT - dt);
+                _hitOverlay.Color = new Color(1f, 0.03f, 0.05f, 0.24f * (_hitOverlayT / 0.42f));
+                if (_hitOverlayT <= 0f) _damageIndicator.Visible = false;
+            }
 
             // virtual joystick visuals (follow touches)
             if (_phase == Phase.Playing && _joyBaseL != null)
             {
-                (Vector2 o, Vector2 c, bool active) moveS = (Vector2.Zero, Vector2.Zero, false), aimS = (Vector2.Zero, Vector2.Zero, false);
+                if (_mobileControls)
+                {
+                    _joyBaseL.Visible = _joyKnobL.Visible = true;
+                    _joyBaseR.Visible = _joyKnobR.Visible = false;
+                    _fireBtn.Visible = true;
+                }
+                (Vector2 o, Vector2 c, bool active) moveS = (Vector2.Zero, Vector2.Zero, false);
                 foreach (var tv in _touches.Values)
-                    if (tv.aim) aimS = (tv.origin, tv.cur, true); else moveS = (tv.origin, tv.cur, true);
+                    if (!tv.aim) moveS = (tv.origin, tv.cur, true);
                 float k = 1280f / GetViewport().GetVisibleRect().Size.X;
                 SetJoy(_joyBaseL, _joyKnobL, moveS, k);
-                SetJoy(_joyBaseR, _joyKnobR, aimS, k);
             }
             else if (_joyBaseL != null && _joyBaseL.Visible)
             {
@@ -2076,6 +2895,9 @@ namespace PatientZero
                 if (_titleGlow != null) _titleGlow.Modulate = new Color(1, 1, 1, 0.7f + 0.3f * Mathf.Sin(_time * 2.2f));
                 if (_menuAccent != null) _menuAccent.Size = new Vector2(200 + 60 * Mathf.Sin(_time * 1.8f), 2);
             }
+
+            // death screen fx (glitch title, REC blink, corruption pulse, adapt bar tween)
+            if (_overPanel.Visible) UpdateOverFx(dt);
 
             // AI tasks completing
             if (_pendingDecision is { IsCompleted: true })
@@ -2140,6 +2962,33 @@ namespace PatientZero
 
             _muzzleLight.LightEnergy = Mathf.Max(0, _muzzleLight.LightEnergy - dt * 22f);
 
+            // first-person viewmodel: bob + sway + recoil
+            if (_vmHolder != null)
+            {
+                bool vmOn = _camMode == CamMode.Fpp && _phase == Phase.Playing;
+                _vmHolder.Visible = vmOn;
+                if (vmOn)
+                {
+                    float sp = _player.Vel.Length();
+                    float bobA = Mathf.Min(sp / Config.PlayerSpeed, 1f) * 0.011f;
+                    float bx = Mathf.Sin(_time * 7.5f) * bobA;
+                    float by = -Mathf.Abs(Mathf.Cos(_time * 7.5f)) * bobA * 0.8f;
+                    float dyaw = dt > 0.0001f ? (_yaw - _vmLastYaw) / dt : 0f;
+                    _vmLastYaw = _yaw;
+                    float swayTarget = Mathf.Clamp(-dyaw * 0.05f, -0.045f, 0.045f);
+                    _vmSwayX = Mathf.Lerp(_vmSwayX, swayTarget, 1f - Mathf.Exp(-10f * dt));
+                    _vmRecoil = Mathf.Max(0, _vmRecoil - dt * 8f);
+                    _vmHolder.Position = _vmBasePos + new Vector3(bx + _vmSwayX, by + _vmRecoil * 0.01f, _vmRecoil * 0.05f);
+                    _vmHolder.RotationDegrees = _vmBaseRot + new Vector3(_vmSwayX * 28f + _vmRecoil * 3.5f, 0f, _vmSwayX * 22f);
+
+                    // arms reach from screen bottom onto the grip + foregrip (in holder space)
+                    var wDef = Config.Weapons[Mathf.Clamp(_weaponIdx, 0, Config.Weapons.Length - 1)];
+                    float fg = wDef.ForegripZ * wDef.VmScale;
+                    OrientVmArm(_vmArmR, _vmArmRM, new Vector3(0.33f, -0.45f, -0.10f), new Vector3(0.015f, -0.02f, 0.04f));
+                    OrientVmArm(_vmArmL, _vmArmLM, new Vector3(0.13f, -0.49f, -0.06f), new Vector3(0f, 0.045f, -fg));
+                }
+            }
+
             if (_phase == Phase.Playing)
             {
                 // spawn queue
@@ -2183,7 +3032,7 @@ namespace PatientZero
                 }
                 if (_playerAnim != null)
                 {
-                    if (mv.LengthSquared() > 0.01f) PlayAnim(_playerAnim, "Walk", 1.1f);
+                    if (mv.LengthSquared() > 0.01f) PlayAnim(_playerAnim, "Walk", 0.95f);
                     else PlayAnim(_playerAnim, "Idle", 1f);
                 }
 
@@ -2207,7 +3056,11 @@ namespace PatientZero
                     var to = p.Pos - e.Pos;
                     float dist = to.Length();
                     var dirV = dist > 0.001f ? to / dist : Vector2.Zero;
-                    if (e.Type == EnemyType.Boss && dist < 10f) dirV *= 0.15f; // boss holds ground to cast
+                    // keep personal space — shamble in slowly, halt at swing range, no face-hugging
+                    float holdAt = Config.EnemyAttackRange + e.Radius - 0.10f;
+                    if (dist < holdAt + 1.6f) dirV *= 0.55f; // decelerating shamble on approach
+                    if (dist < holdAt) dirV *= 0.12f;
+                    else if (e.Type == EnemyType.Boss && dist < 10f) dirV *= 0.15f; // boss holds ground to cast
                     var steer = dirV;
                     foreach (var o in _enemies)
                     {
@@ -2233,7 +3086,7 @@ namespace PatientZero
                         if (e.LungeT > 0)
                         {
                             e.LungeT -= dt;
-                            e.Vel = e.LungeDir * (e.Speed * 3.1f);
+                            e.Vel = e.LungeDir * (e.Speed * 2.6f);
                         }
                         else if (e.LungeCd <= 0 && dist > 3.2f && dist < 7.5f)
                         {
@@ -2281,11 +3134,21 @@ namespace PatientZero
                         if (e.Dead || e.SpawnT > 0) continue;
                         if (b.Pos.DistanceTo(e.Pos) < e.Radius + 0.18f)
                         {
+                            bool headshot = b.Pos.DistanceTo(e.Pos) <= Mathf.Max(0.28f, e.Radius * 0.42f);
                             e.Hp -= b.Damage;
                             e.Flash = 1;
                             b.Dead = true;
                             SpawnBurst(new Vector3(b.Pos.X, 1.0f, b.Pos.Y), BloodRed, 14, 5f);
                             BloodDecal(e.Pos, 0.7f);
+                            if (headshot)
+                            {
+                                const int headshotBonus = 50;
+                                _score += headshotBonus;
+                                _scoreLabel.Text = _score.ToString();
+                                _tacticLabel.Text = $"HEADSHOT // +{headshotBonus} BONUS";
+                                _tacticLabel.Modulate = new Color(1f, 0.78f, 0.3f, 1f);
+                                _headshotHintT = 1.2f;
+                            }
                             if (e.Hp <= 0) KillEnemy(e, "ranged");
                             break;
                         }
@@ -2325,15 +3188,39 @@ namespace PatientZero
             SyncVisuals(dt);
             UpdateCamera(dt);
 
-            // screenshot dev mode
-            if (_screenshotMode && _shotAt > 0 && _time >= _shotAt)
+// screenshot dev mode
+            if ((_screenshotMode || _overShotMode) && _shotAt > 0 && _time >= _shotAt)
             {
                 _shotAt = -1;
-                var img = GetViewport().GetTexture().GetImage();
-                img.SavePng("/tmp/pz_shot.png");
-                GD.Print("SCREENSHOT SAVED /tmp/pz_shot.png");
-                GetTree().Quit();
+                _ = CaptureShot(); // async coroutine — _Process stays synchronous
+                return;
             }
+        }
+
+        private async System.Threading.Tasks.Task CaptureShot()
+        {
+            Dbg($"[SHOT] t={_time:F1} grabbing frame…");
+            await ToSignal(RenderingServer.Singleton, "frame_post_draw");
+            var img = GetViewport().GetTexture().GetImage();
+            Dbg($"[SHOT] image {img.GetWidth()}x{img.GetHeight()} captured, saving…");
+                img.SavePng(_overShotMode ? "/tmp/pz_over.png" : "/tmp/pz_shot.png");
+                if (_gunHolder != null)
+                {
+                    var g = _gunHolder.GlobalPosition;
+                    var screen = _cam.UnprojectPosition(g);
+                    bool onScreen = screen.X >= 0 && screen.X <= 1280 && screen.Y >= 0 && screen.Y <= 720;
+                    Dbg($"[GUN] cam={_camMode} world=({g.X:F2},{g.Y:F2},{g.Z:F2}) screen=({screen.X:F0},{screen.Y:F0}) onScreen={onScreen} aim=({_player.Aim.X:F1},{_player.Aim.Y:F1})");
+                    if (_playerSkel != null && _boneUpperR >= 0)
+                    {
+                        var shoulderW = _playerSkel.GlobalTransform * _playerSkel.GetBoneGlobalPose(_boneUpperR);
+                        var foreW = _playerSkel.GlobalTransform * _playerSkel.GetBoneGlobalPose(_boneForeR);
+                        Dbg($"[GUN] shoulder→grip={shoulderW.Origin.DistanceTo(g):F2}m elbow→grip={foreW.Origin.DistanceTo(g):F2}m (want elbow→grip ≤0.22)");
+                    }
+                    if (_vmHolder != null && _vmHolder.Visible)
+                        Dbg($"[GUN] vmPos={_vmHolder.Position} vmVisibleNodes={_vmNodes.Count(n => n is { Visible: true })} armsOn={_vmArmR is { Visible: true }}");
+                }
+                GD.Print(_overShotMode ? "SCREENSHOT SAVED /tmp/pz_over.png" : "SCREENSHOT SAVED /tmp/pz_shot.png");
+                GetTree().Quit();
         }
 
         // ==================================================================
@@ -2360,6 +3247,33 @@ namespace PatientZero
                     _playerNode.Scale = Vector3.One * 1.05f * (1f + _player.HitFlash * 0.06f);
                 else
                     _playerNode.Scale = Vector3.One * 1.05f;
+
+                // gun is rigid on the chest rig; both arm segments aim-lock onto the
+                // grip + foregrip so hands truly HOLD it while the legs keep walking
+                if (_gunHolder != null && _playerSkel != null && _boneUpperR >= 0)
+                {
+                    var gunW = _gunHolder.GlobalTransform;
+                    var wDef = Config.Weapons[Mathf.Clamp(_weaponIdx, 0, Config.Weapons.Length - 1)];
+                    var grip = gunW.Origin + gunW.Basis * new Vector3(0f, -0.04f, -0.02f);
+                    var foregrip = gunW.Origin + gunW.Basis * new Vector3(0f, 0.03f, wDef.ForegripZ);
+                    AimBoneAt(_boneUpperR, grip);
+                    AimBoneAt(_boneForeR, grip);
+                    AimBoneAt(_boneUpperL, foregrip);
+                    AimBoneAt(_boneForeL, foregrip);
+
+                    var localGrip = _playerNode.GlobalTransform.AffineInverse() * grip;
+                    var localForegrip = _playerNode.GlobalTransform.AffineInverse() * foregrip;
+                    if (_tppArmR != null)
+                    {
+                        _tppArmR.Visible = _camMode == CamMode.Tpp;
+                        OrientVmArm(_tppArmR, _tppArmRM, new Vector3(0.27f, 1.42f, 0.08f), localGrip);
+                    }
+                    if (_tppArmL != null)
+                    {
+                        _tppArmL.Visible = _camMode == CamMode.Tpp;
+                        OrientVmArm(_tppArmL, _tppArmLM, new Vector3(-0.20f, 1.40f, 0.08f), localForegrip);
+                    }
+                }
             }
 
             // enemies
@@ -2401,7 +3315,7 @@ namespace PatientZero
                 // keep walking after spawn, attack anim handled on hit
                 if (hasAnim && e.SpawnT <= 0 && apE!.CurrentAnimation.ToString().Contains("Attack") && !apE.IsPlaying())
                 {
-                    PlayAnim(apE, "Walk", e.Type == EnemyType.Fast ? 1.5f : 1f);
+                        PlayAnim(apE, "Walk", e.Type == EnemyType.Fast ? 1.35f : e.Type == EnemyType.Tanky ? 0.42f : 0.58f);
                 }
             }
 
@@ -2420,9 +3334,10 @@ namespace PatientZero
                     _bulletNodes.RemoveAt(i);
                     continue;
                 }
-                node.Position = new Vector3(sim.Pos.X, 0.95f, sim.Pos.Y);
-                float fl = 1f + 0.14f * Mathf.Sin(_time * 31f + i * 2.1f);
-                node.Scale = new Vector3(fl, fl, 1f + 0.2f * Mathf.Sin(_time * 26f + i));
+                node.Position = new Vector3(sim.Pos.X, node.Position.Y, sim.Pos.Y);
+                float fl = 1f + 0.18f * Mathf.Sin(_time * 31f + i * 2.1f);
+                node.RotateZ(dt * 18f);
+                node.Scale = new Vector3(fl, fl, 1f + 0.3f * Mathf.Sin(_time * 26f + i));
             }
 
             // particles (sim-driven fallback bursts use CpuParticles; sim list only for compat)
@@ -2454,9 +3369,27 @@ namespace PatientZero
                 CamMode.Fpp => "CAM: FPP [C]",
                 _ => "CAM: TOP [C]",
             };
+            _cam.Fov = _camMode switch
+            {
+                CamMode.Tpp => 62f,
+                CamMode.Fpp => 74f,
+                _ => 48f,
+            };
             _crosshair.Visible = _camMode != CamMode.Top && _phase == Phase.Playing;
             _playerNode.Visible = _camMode != CamMode.Fpp;
+            SyncVmVisibility();
             ApplyMouseMode();
+        }
+
+        private void SyncVmVisibility()
+        {
+            if (_vmHolder == null) return;
+            bool on = _camMode == CamMode.Fpp && _phase == Phase.Playing;
+            _vmHolder.Visible = on;
+            for (int i = 0; i < _vmNodes.Count; i++)
+                if (_vmNodes[i] != null) _vmNodes[i]!.Visible = on && i == _weaponIdx;
+            if (_vmArmR != null) _vmArmR.Visible = on;
+            if (_vmArmL != null) _vmArmL.Visible = on;
         }
 
         private void ApplyMouseMode()
@@ -2477,15 +3410,17 @@ namespace PatientZero
             {
                 case CamMode.Tpp:
                 {
-                    var target = p3 + Vector3.Up * 1.7f;
-                    desired = target - fwd * 4.6f + Vector3.Up * 2.6f;
-                    desiredRot = new Vector3(-0.42f + _pitch * 0.55f, _yaw, 0);
+                    // over-the-shoulder: closer in, offset right, near-1:1 pitch
+                    var target = p3 + Vector3.Up * 1.55f;
+                    var right = new Vector3(Mathf.Cos(_yaw), 0f, -Mathf.Sin(_yaw));
+                    desired = target - fwd * 3.35f + Vector3.Up * 0.72f + right * 0.38f;
+                    desiredRot = new Vector3(_pitch * 0.75f - 0.06f, _yaw, 0f);
                     break;
                 }
                 case CamMode.Fpp:
                 {
-                    desired = p3 + Vector3.Up * 1.62f - fwd * 0.15f;
-                    desiredRot = new Vector3(_pitch, _yaw, 0);
+                    desired = p3 + Vector3.Up * 1.58f - fwd * 0.12f;
+                    desiredRot = new Vector3(_pitch, _yaw, 0f);
                     break;
                 }
                 default:
@@ -2502,7 +3437,13 @@ namespace PatientZero
                 _camPos = _camPos.Lerp(desired, k);
                 _camRot = _camRot.Lerp(desiredRot, k);
             }
-            else { _camPos = desired; _camRot = desiredRot; }
+            else
+            {
+                // tight exponential follow — silky at 60-90fps feel
+                float k = 1f - Mathf.Exp(-24f * dt);
+                _camPos = _camPos.Lerp(desired, k);
+                _camRot = _camRot.Lerp(desiredRot, k);
+            }
 
             Vector3 off = Vector3.Zero;
             if (_shake > 0.001f)

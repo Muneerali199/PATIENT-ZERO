@@ -76,17 +76,17 @@ namespace PatientZero
         public const float PurgeCooldown = 15f;
         public const float InvulnTime = 0.4f;
 
-        // Enemies: hp, speed, damage, radius, score
+        // Enemies: hp, speed, damage, radius, score — slower shamblers, tougher hides
         public static readonly Dictionary<EnemyType, (float hp, float speed, float dmg, float radius, int score)> Enemies = new()
         {
-            { EnemyType.Standard, (100f, 3.0f, 10f, 0.85f, 10) },
-            { EnemyType.Fast, (50f, 6.1f, 5f, 0.65f, 15) },
-            { EnemyType.Tanky, (250f, 1.6f, 20f, 1.15f, 25) },
-            { EnemyType.Boss, (1800f, 2.1f, 35f, 1.5f, 500) },
+            { EnemyType.Standard, (170f, 2.05f, 10f, 0.85f, 10) },
+            { EnemyType.Fast, (95f, 4.3f, 5f, 0.65f, 15) },
+            { EnemyType.Tanky, (430f, 1.1f, 20f, 1.15f, 25) },
+            { EnemyType.Boss, (2600f, 1.5f, 35f, 1.5f, 500) },
         };
 
-        public const float EnemyAttackRange = 1.7f;
-        public const float EnemyAttackCd = 1.0f;
+        public const float EnemyAttackRange = 2.3f;
+        public const float EnemyAttackCd = 1.15f;
         public const float SpawnStagger = 0.32f;
         public const float IntermissionMin = 1.1f;
         public const float TauntHold = 2.9f;
@@ -162,22 +162,32 @@ namespace PatientZero
             public int Pellets = 1;
             public float Spread;
             public string Model = "";
+            // player-space chest-rig mount (meters, player faces +Z, right = +X)
+            public Vector3 MountPos = new(0.20f, 1.22f, 0.28f);
+            public Vector3 MountRot = new(0f, 0f, 0f);
+            public float MountScale = 1.0f;
+            public float ForegripZ = 0.2f; // where the left hand grips the rail
+            public float VmScale = 0.8f; // first-person viewmodel scale
+            public Vector3 VmRot = new(0f, 0f, 0f); // extra viewmodel rotation (camera space, holder already flips Y 180)
         }
 
         public static readonly WeaponDef[] Weapons =
         {
-            new WeaponDef { Name = "PULSE PISTOL", Sound = "pistol", Mag = 10, Damage = 55, FireCd = 0.30f, ReloadTime = 1.1f, Speed = 17f, BulletColor = new Color(1f, 0.7f, 0.3f), Pellets = 1, Model = "res://assets/models/pistol.glb" },
-            new WeaponDef { Name = "REAPER'S BANE", Sound = "shoot", Mag = 30, Damage = 32, FireCd = 0.13f, ReloadTime = 1.6f, Speed = 20f, BulletColor = new Color(0.62f, 0.94f, 0.7f), Pellets = 1, Model = "res://assets/models/rifle.glb" },
-            new WeaponDef { Name = "VOID SCATTERGUN", Sound = "shotgun", Mag = 6, Damage = 18, FireCd = 0.72f, ReloadTime = 2.0f, Speed = 15f, BulletColor = new Color(0.4f, 0.85f, 1f), Pellets = 5, Spread = 0.13f, Model = "res://assets/models/scattergun.glb" },
+            new WeaponDef { Name = "PULSE PISTOL", Sound = "pistol", Mag = 10, Damage = 55, FireCd = 0.30f, ReloadTime = 1.1f, Speed = 17f, BulletColor = new Color(1f, 0.7f, 0.3f), Pellets = 1, Model = "res://assets/models/pistol.glb",
+                MountPos = new Vector3(0.21f, 1.30f, 0.26f), MountRot = new Vector3(0f, 0f, 0f), MountScale = 1.0f, ForegripZ = 0.13f, VmScale = 0.8f, VmRot = new Vector3(0f, 0f, 0f) },
+            new WeaponDef { Name = "AKM REAPER", Sound = "akm_fire", Mag = 30, Damage = 32, FireCd = 0.13f, ReloadTime = 1.6f, Speed = 20f, BulletColor = new Color(1f, 0.55f, 0.15f), Pellets = 1, Model = "res://assets/models/akm.glb",
+                MountPos = new Vector3(0.17f, 1.32f, 0.30f), MountRot = new Vector3(0f, 0f, 0f), MountScale = 1.0f, ForegripZ = 0.26f, VmScale = 0.95f, VmRot = new Vector3(0f, 0f, 0f) },
+            new WeaponDef { Name = "VOID SCATTERGUN", Sound = "shotgun", Mag = 6, Damage = 18, FireCd = 0.72f, ReloadTime = 2.0f, Speed = 15f, BulletColor = new Color(0.4f, 0.85f, 1f), Pellets = 5, Spread = 0.13f, Model = "res://assets/models/scattergun.glb",
+                MountPos = new Vector3(0.18f, 1.32f, 0.26f), MountRot = new Vector3(0f, 0f, 0f), MountScale = 1.0f, ForegripZ = 0.34f, VmScale = 0.85f, VmRot = new Vector3(0f, 0f, 0f) },
         };
 
-        // AI
-        public const string GeminiModel = "gemini-2.0-flash";
+        // AI — gemini-2.0-flash is RETIRED (404s); 3.5-flash-lite verified fast (~2s) on our key
+        public const string GeminiModel = "gemini-3.5-flash-lite";
         public const string GeminiUrl =
             "https://generativelanguage.googleapis.com/v1beta/models/" + GeminiModel + ":generateContent";
         public const int WaveTimeoutMs = 2500;
         public const int AutopsyTimeoutMs = 3200;
-        public static string GeminiApiKey = ""; // set via --key= CLI arg or user://pz_key.txt
+        public static string GeminiApiKey = ""; // supply at runtime with --key=...; local AI fallback remains available
 
         public static string ZoneToApi(ZoneName z) => z switch
         {

@@ -13,6 +13,10 @@ namespace PatientZero
         {
             var failures = new List<string>();
 
+            // logic tests assert the deterministic LOCAL paths — neutralize the live key
+            var savedKey = Config.GeminiApiKey;
+            Config.GeminiApiKey = "";
+
             // 1. Local brain: a camping, ranged-only player must get flanked + tanky pressure
             var camper = new BehaviorSummary
             {
@@ -68,11 +72,13 @@ namespace PatientZero
 
             if (failures.Count == 0)
             {
+                Config.GeminiApiKey = savedKey;
                 GD.Print("SMOKE: PASS (6/6 checks)");
                 Quit(0);
             }
             else
             {
+                Config.GeminiApiKey = savedKey;
                 GD.PrintErr("SMOKE: FAIL — " + string.Join(", ", failures));
                 Quit(1);
             }
