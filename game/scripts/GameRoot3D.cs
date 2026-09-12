@@ -60,7 +60,7 @@ namespace PatientZero
         // ---------- camera modes ----------
         private enum CamMode { Top, Tpp, Fpp }
         private CamMode _camMode = CamMode.Top;
-        private float _yaw, _pitch = -0.12f;
+        private float _yaw, _pitch = -0.04f;
         private Vector3 _camPos = new(0, 25f, 15.5f);
         private Vector3 _camRot = new(-1.01f, 0, 0);
         private float _camBlend = 1f;
@@ -1446,7 +1446,7 @@ namespace PatientZero
                 }
                 case CamMode.Fpp:
                 {
-                    desired = p3 + Vector3.Up * 1.55f - fwd * 0.05f;
+                    desired = p3 + Vector3.Up * 1.62f - fwd * 0.15f;
                     desiredRot = new Vector3(_pitch, _yaw, 0);
                     break;
                 }
