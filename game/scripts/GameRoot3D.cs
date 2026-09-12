@@ -112,6 +112,44 @@ namespace PatientZero
         private float _tauntTick, _tauntHideAt;
         private float _bannerT = -1f;
 
+        // ---------- audio ----------
+        private AudioStreamPlayer _bgm = null!;
+        private readonly List<AudioStreamPlayer> _sfxPool = new();
+        private int _sfxIdx;
+        private readonly Dictionary<string, AudioStream> _sfx = new();
+
+        private void InitAudio()
+        {
+            var bgm = GD.Load<AudioStreamWav>("res://assets/audio/bgm_dark_aria.wav");
+            if (bgm != null)
+            {
+                bgm.LoopMode = AudioStreamWav.LoopModeEnum.Forward;
+                bgm.LoopBegin = 0;
+                bgm.LoopEnd = (int)(bgm.GetLength() * bgm.MixRate);
+                _bgm = new AudioStreamPlayer { Stream = bgm, VolumeDb = -9f };
+                AddChild(_bgm);
+            }
+            foreach (var n in new[] { "shoot", "hit", "melee", "purge", "hurt", "wave", "over", "taunt", "boss" })
+            {
+                var s = GD.Load<AudioStream>($"res://assets/audio/{n}.wav");
+                if (s != null) _sfx[n] = s;
+            }
+            for (int i = 0; i < 10; i++)
+            {
+                var p = new AudioStreamPlayer { VolumeDb = -4f };
+                AddChild(p);
+                _sfxPool.Add(p);
+            }
+        }
+
+        public void PlaySfx(string name)
+        {
+            if (!_sfx.TryGetValue(name, out var s)) return;
+            var p = _sfxPool[_sfxIdx++ % _sfxPool.Count];
+            p.Stream = s;
+            p.Play();
+        }
+
         // input
         private readonly Dictionary<long, (Vector2 origin, Vector2 cur, bool aim)> _touches = new();
         private bool _mouseDown;
@@ -154,6 +192,7 @@ namespace PatientZero
             BuildArena();
             BuildPlayer();
             BuildUi();
+            InitAudio();
             ShowStart();
             if (_screenshotMode)
             {
@@ -700,6 +739,7 @@ namespace PatientZero
             _scoreLabel.Text = "0";
             UpdateHp();
             ApplyCamVisuals();
+            if (_bgm != null && !_bgm.Playing) _bgm.Play();
             _mouseLookActive = false;
             StartWave(1, Config.Wave1Bias(_bucket), ZoneName.Balanced);
         }
@@ -711,6 +751,7 @@ namespace PatientZero
             _waveBanner.Text = $"WAVE {n:00}";
             _waveBanner.Visible = true;
             _bannerT = 0;
+            PlaySfx("wave");
 
             var types = new List<EnemyType>();
             for (int i = 0; i < comp.Standard; i++) types.Add(EnemyType.Standard);
@@ -740,6 +781,7 @@ namespace PatientZero
                 _spawnQueue.Add((lastT + 1.2f, EnemyType.Boss, new Vector2(0, -10)));
                 _waveBanner.Text = $"WAVE {n:00} — IT MANIFESTS";
                 ShowTaunt("Enough. I will attend to this specimen personally.", "» PATIENT ZERO MANIFESTS — boss engagement");
+                PlaySfx("boss");
             }
         }
 
@@ -854,6 +896,7 @@ namespace PatientZero
             float dist = _player.Pos.DistanceTo(e.Pos);
             _logger.TrackKill(kind, dist);
             _kills++;
+            PlaySfx("hit");
             _score += Config.Enemies[e.Type].score;
             _scoreLabel.Text = _score.ToString();
 
@@ -936,6 +979,7 @@ namespace PatientZero
             };
             _fxRoot.AddChild(node);
             _bulletNodes.Add((node, proj));
+            PlaySfx("shoot");
             _muzzleLight.LightEnergy = 2.2f;
             _muzzleLight.Position = new Vector3(p.Pos.X + p.Aim.X * 0.8f, 1.35f, p.Pos.Y + p.Aim.Y * 0.8f);
         }
@@ -958,6 +1002,7 @@ namespace PatientZero
             }
             if (hit)
             {
+                PlaySfx("melee");
                 p.MeleeCd = Config.MeleeCooldown;
                 PlayAnim(_playerAnim, "1H_Melee_Attack_Slice_Horizontal", 1.6f);
                 SpawnBurst(new Vector3(p.Pos.X + p.Aim.X, 0.8f, p.Pos.Y + p.Aim.Y), TermGreen, 8, 4f);
@@ -969,6 +1014,7 @@ namespace PatientZero
             var p = _player;
             if (p.PurgeCd > 0) return;
             p.PurgeCd = Config.PurgeCooldown;
+            PlaySfx("purge");
             _purgeRingT = 0;
             _shake = 0.5f;
             foreach (var e in _enemies)
@@ -990,6 +1036,7 @@ namespace PatientZero
             p.Hp -= dmg;
             p.Invuln = Config.InvulnTime;
             p.HitFlash = 1;
+            PlaySfx("hurt");
             _shake = Mathf.Min(_shake + 0.3f, 0.7f);
             UpdateHp();
             if (p.Hp <= 0) OnPlayerDeath();
@@ -1011,6 +1058,7 @@ namespace PatientZero
             _crosshair.Visible = false;
             SpawnBurst(new Vector3(_player.Pos.X, 0.8f, _player.Pos.Y), AlertRed, 40, 8f);
             _playerNode.Visible = false;
+            PlaySfx("over");
             _pendingAutopsy = Task.Run(async () =>
                 await PatientZeroBrain.Autopsy(_history, _profile, _wave, _kills, _score));
         }
@@ -1061,6 +1109,7 @@ namespace PatientZero
             _reasonLabel.Text = "";
             _tauntPanel.Visible = true;
             _tauntHideAt = _time + Config.TauntHold + text.Length * 0.03f;
+            PlaySfx("taunt");
         }
 
         // ==================================================================
