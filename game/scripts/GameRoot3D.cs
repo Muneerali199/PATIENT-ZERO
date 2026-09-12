@@ -172,6 +172,69 @@ namespace PatientZero
         private Label _ammoLabel = null!;
         private bool _autoFire;
         private Tween? _kickTween;
+
+        // ---------- UI polish + virtual joysticks ----------
+        private TextureRect _joyBaseL = null!, _joyKnobL = null!, _joyBaseR = null!, _joyKnobR = null!;
+        private TextureRect? _menuRing;
+        private Label? _titleGlow;
+        private ColorRect? _menuAccent;
+        private ImageTexture? _ringTex, _discTex;
+
+        private static ImageTexture MakeRingTex(int size, float innerR, float outerR, Color c)
+        {
+            var img = Image.CreateEmpty(size, size, false, Image.Format.Rgba8);
+            var center = new Vector2(size / 2f, size / 2f);
+            for (int y = 0; y < size; y++)
+            for (int x = 0; x < size; x++)
+            {
+                float d = (new Vector2(x, y) - center).Length() / (size / 2f);
+                if (d >= innerR && d <= outerR)
+                {
+                    float edge = Mathf.Min((d - innerR) / 0.05f, (outerR - d) / 0.05f);
+                    img.SetPixel(x, y, new Color(c.R, c.G, c.B, c.A * Mathf.Clamp(edge, 0f, 1f)));
+                }
+            }
+            return ImageTexture.CreateFromImage(img);
+        }
+
+        private static ImageTexture MakeDiscTex(int size, Color c)
+        {
+            var img = Image.CreateEmpty(size, size, false, Image.Format.Rgba8);
+            var center = new Vector2(size / 2f, size / 2f);
+            for (int y = 0; y < size; y++)
+            for (int x = 0; x < size; x++)
+            {
+                float d = (new Vector2(x, y) - center).Length() / (size / 2f);
+                if (d <= 1f) img.SetPixel(x, y, new Color(c.R, c.G, c.B, c.A * Mathf.Clamp((1f - d) / 0.12f + 0.4f, 0f, 1f)));
+            }
+            return ImageTexture.CreateFromImage(img);
+        }
+
+        private static ImageTexture MakeVignetteTex(int w = 256, int h = 144)
+        {
+            var img = Image.CreateEmpty(w, h, false, Image.Format.Rgba8);
+            for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++)
+            {
+                float dx = (x / (float)w - 0.5f) * 2f, dy = (y / (float)h - 0.5f) * 2f;
+                float d = Mathf.Sqrt(dx * dx + dy * dy);
+                float a = Mathf.Clamp((d - 0.62f) * 1.1f, 0f, 0.6f);
+                img.SetPixel(x, y, new Color(0, 0, 0, a));
+            }
+            return ImageTexture.CreateFromImage(img);
+        }
+
+        private void StyleBtn(Button b, float alpha = 0.62f)
+        {
+            var s = new StyleBoxFlat { BgColor = new Color(0.012f, 0.04f, 0.024f, alpha) };
+            s.SetBorderWidthAll(1);
+            s.BorderColor = new Color(0.18f, 1f, 0.53f, 0.4f);
+            s.CornerRadiusTopLeft = s.CornerRadiusTopRight = s.CornerRadiusBottomLeft = s.CornerRadiusBottomRight = 6;
+            b.AddThemeStyleboxOverride("normal", s);
+            b.AddThemeStyleboxOverride("hover", s);
+            b.AddThemeStyleboxOverride("pressed", s);
+            b.AddThemeColorOverride("font_color", TermGreen);
+        }
         private Control _tauntPanel = null!;
         private ColorRect _hpFill = null!;
         private Button _purgeBtn = null!;
@@ -505,6 +568,16 @@ namespace PatientZero
             catch { return null; }
         }
 
+        private static void SetJoy(TextureRect baseR, TextureRect knob, (Vector2 o, Vector2 c, bool active) s, float k)
+        {
+            baseR.Visible = s.active; knob.Visible = s.active;
+            if (!s.active) return;
+            baseR.Position = s.o * k - baseR.Size / 2;
+            var d = (s.c - s.o) * k;
+            if (d.Length() > 46f) d = d.Normalized() * 46f;
+            knob.Position = s.o * k - knob.Size / 2 + d * 0.55f;
+        }
+
         // ---- weapon system ----
         private void SwitchWeapon(int i)
         {
@@ -816,8 +889,10 @@ namespace PatientZero
 
             // Purge button
             _purgeBtn = new Button { Text = "PURGE [SPACE]", Position = new Vector2(1090, 596), Size = new Vector2(166, 66) };
+            
             _purgeBtn.AddThemeFontSizeOverride("font_size", 16);
             _purgeBtn.Pressed += () => { if (_phase == Phase.Playing) TryPurge(); };
+            StyleBtn(_purgeBtn);
             _ui.AddChild(_purgeBtn);
 
             // FIRE button (hold to shoot — touch-friendly)
@@ -825,6 +900,7 @@ namespace PatientZero
             _fireBtn.AddThemeFontSizeOverride("font_size", 22);
             _fireBtn.ButtonDown += () => _fireHeld = true;
             _fireBtn.ButtonUp += () => _fireHeld = false;
+            StyleBtn(_fireBtn, 0.7f);
             _ui.AddChild(_fireBtn);
 
             // weapon switcher (top-center-left) + ammo counter
@@ -843,10 +919,70 @@ namespace PatientZero
             _ui.AddChild(wbar);
             _ammoLabel = MkLabel(UIR(), "30 / 30", new Vector2(1030, 84), new Vector2(226, 30), 22, TermGreen, HorizontalAlignment.Right);
 
+            // ---- UI background upgrade: vignette + scanlines + corner brackets + HUD backdrops ----
+            var vignette = new TextureRect
+            {
+                Texture = MakeVignetteTex(),
+                ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+                Size = new Vector2(1280, 720),
+                MouseFilter = Control.MouseFilterEnum.Ignore,
+            };
+            UIR().AddChild(vignette);
+            UIR().MoveChild(vignette, 0); // behind HUD labels
+
+            var scanImg = Image.CreateEmpty(4, 4, false, Image.Format.Rgba8);
+            for (int sy = 0; sy < 4; sy++)
+            for (int sx = 0; sx < 4; sx++)
+                scanImg.SetPixel(sx, sy, sy == 0 ? new Color(0, 0, 0, 0.13f) : new Color(0, 0, 0, 0));
+            var scan = new TextureRect
+            {
+                Texture = ImageTexture.CreateFromImage(scanImg),
+                ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+                StretchMode = TextureRect.StretchModeEnum.Tile,
+                Size = new Vector2(1280, 720),
+                MouseFilter = Control.MouseFilterEnum.Ignore,
+                Modulate = new Color(1, 1, 1, 0.55f),
+            };
+            UIR().AddChild(scan);
+            UIR().MoveChild(scan, 1);
+
+            var bracket = new Color(0.62f, 0.94f, 0.7f, 0.35f);
+            void Bracket(float x, float y, bool flipX, bool flipY)
+            {
+                var h = new ColorRect { Color = bracket, Position = new Vector2(x, y), Size = new Vector2(46, 3) };
+                var v = new ColorRect { Color = bracket, Position = new Vector2(x, y), Size = new Vector2(3, 46) };
+                if (flipX) h.Position = new Vector2(x - 43, y);
+                if (flipY) v.Position = new Vector2(x, y - 43);
+                UIR().AddChild(h); UIR().AddChild(v);
+            }
+            Bracket(16, 14, false, false); Bracket(1264, 14, true, false);
+            Bracket(16, 706, false, true); Bracket(1264, 706, true, true);
+
+            // HUD backdrops
+            void Backdrop(float x, float y, float w, float h)
+            {
+                var p = new PanelContainer { Position = new Vector2(x, y), Size = new Vector2(w, h), MouseFilter = Control.MouseFilterEnum.Ignore };
+                p.AddThemeStyleboxOverride("panel", PanelStyle(new Color(0.02f, 0.03f, 0.02f, 0.5f), new Color(0.3f, 0.55f, 0.4f, 0.3f)));
+                UIR().AddChild(p);
+                UIR().MoveChild(p, 2);
+            }
+            Backdrop(12, 12, 324, 104);   // vitals + weapons
+            Backdrop(1008, 12, 260, 108); // score + badge + ammo
+
+            // virtual joysticks (mobile)
+            _ringTex = MakeRingTex(140, 0.36f, 0.5f, new Color(0.62f, 0.94f, 0.7f, 0.4f));
+            _discTex = MakeDiscTex(64, new Color(0.62f, 0.94f, 0.7f, 0.55f));
+            _joyBaseL = new TextureRect { Texture = _ringTex, Size = new Vector2(140, 140), Visible = false, MouseFilter = Control.MouseFilterEnum.Ignore };
+            _joyKnobL = new TextureRect { Texture = _discTex, Size = new Vector2(64, 64), Visible = false, MouseFilter = Control.MouseFilterEnum.Ignore };
+            _joyBaseR = new TextureRect { Texture = _ringTex, Size = new Vector2(140, 140), Visible = false, MouseFilter = Control.MouseFilterEnum.Ignore };
+            _joyKnobR = new TextureRect { Texture = _discTex, Size = new Vector2(64, 64), Visible = false, MouseFilter = Control.MouseFilterEnum.Ignore };
+            _ui.AddChild(_joyBaseL); _ui.AddChild(_joyKnobL); _ui.AddChild(_joyBaseR); _ui.AddChild(_joyKnobR);
+
             // Camera mode button
             var camBtn = new Button { Text = "CAM: TOP [C]", Position = new Vector2(24, 596), Size = new Vector2(180, 60) };
             camBtn.AddThemeFontSizeOverride("font_size", 15);
             camBtn.Pressed += CycleCamMode;
+            StyleBtn(camBtn);
             _ui.AddChild(camBtn);
             _camBtn = camBtn;
 
@@ -881,7 +1017,20 @@ namespace PatientZero
             var panel = new Control { Name = "StartPanel" };
             panel.AddChild(bg);
 
+            // rotating reactor ring behind the title
+            _menuRing = new TextureRect
+            {
+                Texture = MakeRingTex(480, 0.42f, 0.47f, new Color(0.16f, 1f, 0.5f, 0.3f)),
+                Size = new Vector2(480, 480),
+                Position = new Vector2(400, 60),
+                MouseFilter = Control.MouseFilterEnum.Ignore,
+                PivotOffset = new Vector2(240, 240),
+            };
+            panel.AddChild(_menuRing);
+            _titleGlow = MkLabel(panel, "PATIENT ZERO", new Vector2(142, 122), new Vector2(1000, 80), 72, new Color(0.16f, 1f, 0.5f, 0.4f), HorizontalAlignment.Center);
             var title = MkLabel(panel, "PATIENT ZERO", new Vector2(140, 120), new Vector2(1000, 80), 72, TermGreen, HorizontalAlignment.Center);
+            _menuAccent = new ColorRect { Color = new Color(0.16f, 1f, 0.5f, 0.6f), Position = new Vector2(540, 214), Size = new Vector2(200, 2) };
+            panel.AddChild(_menuAccent);
             MkLabel(panel, "P R O T O C O L", new Vector2(440, 200), new Vector2(400, 30), 20, TermDim, HorizontalAlignment.Center);
             _startSpec = MkLabel(panel, "", new Vector2(440, 260), new Vector2(400, 30), 22, AlertRed, HorizontalAlignment.Center);
             _startGreet = MkLabel(panel, "", new Vector2(290, 310), new Vector2(700, 70), 20, TermGreen, HorizontalAlignment.Center);
@@ -1555,6 +1704,29 @@ namespace PatientZero
                 _musicTween = CreateTween().SetParallel();
                 _musicTween.TweenProperty(_bgm, "volume_db", _bossMusicOn ? -80f : -9f, 1.4f);
                 _musicTween.TweenProperty(_bgmBoss, "volume_db", _bossMusicOn ? -8f : -80f, 1.4f);
+            }
+
+            // virtual joystick visuals (follow touches)
+            if (_phase == Phase.Playing && _joyBaseL != null)
+            {
+                (Vector2 o, Vector2 c, bool active) moveS = (Vector2.Zero, Vector2.Zero, false), aimS = (Vector2.Zero, Vector2.Zero, false);
+                foreach (var tv in _touches.Values)
+                    if (tv.aim) aimS = (tv.origin, tv.cur, true); else moveS = (tv.origin, tv.cur, true);
+                float k = 1280f / GetViewport().GetVisibleRect().Size.X;
+                SetJoy(_joyBaseL, _joyKnobL, moveS, k);
+                SetJoy(_joyBaseR, _joyKnobR, aimS, k);
+            }
+            else if (_joyBaseL != null && _joyBaseL.Visible)
+            {
+                _joyBaseL.Visible = _joyKnobL.Visible = _joyBaseR.Visible = _joyKnobR.Visible = false;
+            }
+
+            // menu fx
+            if (_startPanel.Visible)
+            {
+                if (_menuRing != null) _menuRing.Rotation += dt * 0.35f;
+                if (_titleGlow != null) _titleGlow.Modulate = new Color(1, 1, 1, 0.7f + 0.3f * Mathf.Sin(_time * 2.2f));
+                if (_menuAccent != null) _menuAccent.Size = new Vector2(200 + 60 * Mathf.Sin(_time * 1.8f), 2);
             }
 
             // AI tasks completing
