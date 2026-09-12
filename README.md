@@ -1,62 +1,108 @@
-# 🧟 PATIENT ZERO: PROTOCOL
+# PATIENT ZERO: PROTOCOL
 
-> **The villain is a live AI that profiles YOU — it studies your habits, remembers you between sessions, and when you die, it writes your autopsy report.**
+> **The enemy is a live AI that studies how you fight, adapts the next wave, and writes your autopsy when you die.**
 
-[![Play the Web Demo](https://img.shields.io/badge/▶_PLAY_NOW-Web_Demo-2aff88)](https://docmagic.me/PATIENT-ZERO/)
-[![Engine](https://img.shields.io/badge/Engine-Godot_4.4_.NET-blue)]()
-[![AI](https://img.shields.io/badge/Brain-Gemini_Flash_+_PZ--CORE-purple)]()
-[![KICKR Codemania](https://img.shields.io/badge/KICKR_Codemania-2026-blueviolet)]()
+[![Play Web Demo](https://img.shields.io/badge/%E2%96%B6%20PLAY%20NOW-Web%20Demo-2aff88)](https://docmagic.me/PATIENT-ZERO/)
+[![Godot](https://img.shields.io/badge/Godot-4.4.1%20.NET-blue)](https://godotengine.org/)
+[![C%23](https://img.shields.io/badge/Runtime-C%23-239120)](https://dotnet.microsoft.com/languages/csharp)
+[![AI](https://img.shields.io/badge/AI-Gemini%20%2B%20PZ--CORE-purple)](https://ai.google.dev/)
 
-| Third-Person | First-Person |
+## Real gameplay captures
+
+These screenshots are committed in [`docs/assets`](docs/assets) and were captured from the Godot game build, not mockups.
+
+| Third-person combat | First-person arena |
 |:---:|:---:|
-| ![TPP](docs/assets/screenshot-tpp.png) | ![FPP](docs/assets/screenshot-fpp.png) |
+| ![Third-person gameplay in the temperate arena](docs/assets/screenshot-tpp.png) | ![First-person gameplay in the urban arena](docs/assets/screenshot-fpp.png) |
 
-## 🎮 What is it?
+| Desert first-person view | Wave arena and medkit |
+|:---:|:---:|
+| ![Desert first-person gameplay](docs/assets/screenshot-desert-fpp.png) | ![Third-person wave arena with a visible healing pickup](docs/assets/screenshot-custom-player.png) |
 
-A wave-survival arena shooter where **the difficulty system is an AI antagonist**. No chatbots, no dialogue trees — the AI reads your behavioral fingerprint (camping %, engagement range, kill style, favored zones) and composes every wave specifically to break YOUR habits. It persists across sessions. It writes your obituary.
+## What is Patient Zero?
+
+**Patient Zero: Protocol** is a 3D zombie wave-survival shooter. The difficulty director is the antagonist: it records player behavior such as movement, engagement range, kill style, and preferred arena zones, then composes later waves to pressure those habits.
+
+The game works offline through **PZ-CORE**, a deterministic local director. Gemini is optional and adds richer wave taunts and end-of-run autopsy prose when a runtime API key is supplied.
 
 **Study. Remember. Report.**
 
-## 📸 Camera Modes
+## Gameplay
 
-| Mode | Key | Feel |
+- Fight escalating waves of Standard, Fast, Tanky, and Gate Boss enemies.
+- Switch between top-down, third-person, and first-person cameras.
+- Use the pistol, AKM, and scattergun with muzzle flashes, orange AKM tracer fire, particles, and weapon audio.
+- Pick up the wave-start medkit to restore up to 35 HP.
+- Watch persistent bottom-screen VITALS, hit feedback, headshot guidance, score bonuses, and boss integrity.
+- Review and share the themed PZ-CORE/Gemini autopsy report after death.
+- Play with keyboard and mouse or the mobile movement joystick, FIRE button, and camera button.
+
+## Controls
+
+| Action | Desktop | Mobile |
 |---|---|---|
-| **TOP** | `C` | Tactical overhead — classic survivors-like |
-| **TPP** | `C` | Over-the-shoulder action |
-| **FPP** | `C` | First-person survival horror |
+| Move | `WASD` | Left virtual joystick |
+| Aim / fire | Mouse | FIRE button |
+| Camera | `C` | Camera button |
+| Purge | `SPACE` | On-screen purge control |
+| Restart after death | `ENTER` | On-screen report action |
 
-## 🧠 The AI (why it's not a wrapper)
+## AI director
 
-- **PZ-CORE (local brain)** — deterministic adaptive rules: anti-camping flanks, anti-range tanky pressure, skill-scaled volume, *no rubber-banding ever*. Works with the network unplugged.
-- **Gemini Flash** — optional richer taunts + autopsy prose (2.5s hard timeout, safety-railed, invisible fallback)
-- **Nemesis Memory** — cross-session specimen profiles ("Specimen #7 returns. The north pillar missed you.")
-- **Autopsy Report** — shareable AI-written death card with archetype + adaptability index
+1. The game logs movement, range, kills, damage, and zone choices during each wave.
+2. The local director converts that behavior into a wave composition, spawn bias, and taunt.
+3. If Gemini is configured, it can enrich the taunt and autopsy while the same safety rails clamp its output.
+4. If the network or key is unavailable, PZ-CORE continues locally with no gameplay interruption.
 
-## 🏗 Repo Layout
-
-| Path | What |
-|---|---|
-| `game/` | **Market build** — Godot 4.4 .NET (C#), 3D, CC0 asset packs |
-| `src/` + `index.html` | **Web demo** — TS/canvas PWA for instant QR play ([live](https://docmagic.me/PATIENT-ZERO/)) |
-| `docs/` | Design brain: [RESEARCH](docs/RESEARCH.md) · [WINNING_PLAN](docs/WINNING_PLAN.md) · [PRD](docs/PRD.md) · [BRAIN](docs/BRAIN.md) · [TECHSTACK](docs/TECHSTACK.md) · [DEMO](docs/DEMO.md) + more |
-
-## 🚀 Run the Godot build
+Gemini is configured at runtime and is intentionally not stored in the repository:
 
 ```bash
-# Requires: Godot 4.4 .NET + .NET 8 SDK
-cd game
-dotnet build
-godot --path .                          # play
-godot --path . -- --theme=desert        # force biome
-godot --path . -- --key=YOUR_GEMINI_KEY # enable Gemini brain
-godot --headless --path . --script res://tests/SmokeTest.cs   # logic tests
+./pz.sh --key=YOUR_GEMINI_KEY
 ```
 
-**Controls:** WASD move · mouse aim/fire (click) · `SPACE` purge · `C` camera mode · touch: dual virtual sticks
+## Run the Godot build
 
-## 🧩 Credits — open-source assets (CC0)
+### Requirements
 
-- [KayKit Skeletons + Adventurers + Dungeon Remastered](https://kaylousberg.com) — characters & environment
-- [Poly Haven](https://polyhaven.com) — PBR concrete textures
+- macOS, Windows, or Linux
+- Godot **4.4.1 .NET / Mono**
+- .NET 8 SDK
 
-*KICKR Codemania 2026 · The AI doesn't assist the game. The AI IS the game.*
+### Build and launch
+
+```bash
+cd game
+dotnet build
+cd ..
+./pz.sh
+```
+
+Useful commands:
+
+```bash
+./pz.sh --theme=desert
+./pz.sh --mobile
+./pz.sh --headless --import
+./pz.sh --screenshot --cam=tpp
+```
+
+The launcher sets `DOTNET_ROOT` for the bundled .NET installation. Screenshot output, when supported by the local renderer, is written to `/tmp/pz_shot.png`; diagnostic lines are written to `/tmp/pz_debug.log`.
+
+## Repository layout
+
+| Path | Purpose |
+|---|---|
+| `game/` | Godot 4.4.1 .NET game, C# gameplay code, scenes, and assets |
+| `game/scripts/GameRoot3D.cs` | Gameplay loop, rendering, weapons, UI, mobile controls, and pickups |
+| `game/scripts/PatientZeroBrain.cs` | Gemini integration and deterministic local fallback |
+| `game/scripts/Config.cs` | Gameplay tuning, weapons, themes, and runtime configuration |
+| `docs/assets/` | Real gameplay screenshots used in this README |
+| `docs/` | Design, research, architecture, and demo documentation |
+| `pz.sh` | Godot launcher with .NET environment setup |
+
+## Credits
+
+- [KayKit Skeletons, Adventurers, and Dungeon Remastered](https://kaylousberg.com) — characters and environment assets
+- [Poly Haven](https://polyhaven.com) — PBR textures
+
+*KICKR Codemania 2026 · The AI doesn't assist the game. The AI is the game.*
