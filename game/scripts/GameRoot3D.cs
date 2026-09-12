@@ -114,6 +114,10 @@ namespace PatientZero
 
         // ---------- audio ----------
         private AudioStreamPlayer _bgm = null!;
+        private AudioStreamPlayer _bgmBoss = null!;
+        private bool _bossActive;
+        private bool _bossMusicOn;
+        private Tween? _musicTween;
         private readonly List<AudioStreamPlayer> _sfxPool = new();
         private int _sfxIdx;
         private readonly Dictionary<string, AudioStream> _sfx = new();
@@ -128,6 +132,13 @@ namespace PatientZero
                 bgm.LoopEnd = (int)(bgm.GetLength() * bgm.MixRate);
                 _bgm = new AudioStreamPlayer { Stream = bgm, VolumeDb = -9f };
                 AddChild(_bgm);
+            }
+            var boss = GD.Load<AudioStreamWav>("res://assets/audio/bgm_boss.wav");
+            if (boss != null)
+            {
+                boss.LoopMode = AudioStreamWav.LoopModeEnum.Forward;
+                _bgmBoss = new AudioStreamPlayer { Stream = boss, VolumeDb = -80f };
+                AddChild(_bgmBoss);
             }
             foreach (var n in new[] { "shoot", "hit", "melee", "purge", "hurt", "wave", "over", "taunt", "boss" })
             {
@@ -446,8 +457,26 @@ namespace PatientZero
             return box;
         }
 
-        /// <summary>Wraps any GLB so it is targetHeight tall, XZ-centered, feet on the ground.
-        /// Outer wrapper scale stays free for gameplay (spawn-in, hit-flash).</summary>
+        /// <summary>Centers any GLB and scales its longest axis to targetLen (for weapons).</summary>
+        private static Node3D NormalizeLength(Node3D model, float targetLen)
+        {
+            var box = new Aabb();
+            bool first = true;
+            ComputeModelAabb(model, Transform3D.Identity, ref first, ref box);
+            if (first) return model;
+            float maxDim = Mathf.Max(box.Size.X, Mathf.Max(box.Size.Y, box.Size.Z));
+            if (maxDim < 0.0001f) return model;
+            model.Position = new Vector3(
+                -(box.Position.X + box.Size.X * 0.5f),
+                -(box.Position.Y + box.Size.Y * 0.5f),
+                -(box.Position.Z + box.Size.Z * 0.5f));
+            var outer = new Node3D { Name = model.Name + "_wroot" };
+            var inner = new Node3D { Name = model.Name + "_wnorm" };
+            inner.AddChild(model);
+            inner.Scale = Vector3.One * (targetLen / maxDim);
+            outer.AddChild(inner);
+            return outer;
+        }
         private static Node3D NormalizeModel(Node3D model, float targetHeight)
         {
             var box = new Aabb();
@@ -478,14 +507,21 @@ namespace PatientZero
                 _playerNode = NormalizeModel(scene.Instantiate<Node3D>(), 1.8f);
                 _playerAnim = FindAnim(_playerNode);
 
-                // rifle in the hero's right hand
-                var rifleScene = LoadScene("res://assets/models/rifle.glb");
-                if (rifleScene != null)
+                // weapon in the hero's right hand — custom/weapon.glb wins, else built-in energy rifle
+                var customWeapon = LoadScene("res://assets/custom/weapon.glb");
+                Node3D? weaponNode = null;
+                if (customWeapon != null)
+                    weaponNode = NormalizeLength(customWeapon.Instantiate<Node3D>(), 0.95f);
+                else
                 {
-                    _rifle = rifleScene.Instantiate<Node3D>();
-                    _rifle.Position = new Vector3(0.28f, 0.95f, 0.22f);
-                    _rifle.RotationDegrees = new Vector3(0, 0, 0);
-                    _playerNode.AddChild(_rifle);
+                    var rifleScene = LoadScene("res://assets/models/rifle.glb");
+                    if (rifleScene != null) weaponNode = rifleScene.Instantiate<Node3D>();
+                }
+                if (weaponNode != null)
+                {
+                    weaponNode.Position = new Vector3(0.28f, 1.0f, 0.22f);
+                    _playerNode.AddChild(weaponNode);
+                    _rifle = weaponNode;
                 }
             }
             else
@@ -740,6 +776,7 @@ namespace PatientZero
             UpdateHp();
             ApplyCamVisuals();
             if (_bgm != null && !_bgm.Playing) _bgm.Play();
+            if (_bgmBoss != null && !_bgmBoss.Playing) _bgmBoss.Play();
             _mouseLookActive = false;
             StartWave(1, Config.Wave1Bias(_bucket), ZoneName.Balanced);
         }
@@ -782,6 +819,7 @@ namespace PatientZero
                 _waveBanner.Text = $"WAVE {n:00} — IT MANIFESTS";
                 ShowTaunt("Enough. I will attend to this specimen personally.", "» PATIENT ZERO MANIFESTS — boss engagement");
                 PlaySfx("boss");
+                _bossActive = true;
             }
         }
 
@@ -910,6 +948,7 @@ namespace PatientZero
                 {
                     ShowTaunt("A temporary avatar. I remain.", "» avatar destroyed — core intelligence unaffected");
                     _shake = 0.8f;
+                    _bossActive = false;
                 }
                 if (ap != null && HasAnim(ap, "Death"))
                 {
@@ -1059,6 +1098,7 @@ namespace PatientZero
             SpawnBurst(new Vector3(_player.Pos.X, 0.8f, _player.Pos.Y), AlertRed, 40, 8f);
             _playerNode.Visible = false;
             PlaySfx("over");
+            _bossActive = false;
             _pendingAutopsy = Task.Run(async () =>
                 await PatientZeroBrain.Autopsy(_history, _profile, _wave, _kills, _score));
         }
@@ -1270,6 +1310,16 @@ namespace PatientZero
             float dt = Mathf.Min((float)delta, 0.05f);
             _time += dt;
             var p = _player;
+
+            // dynamic music crossfade — boss theme when Patient Zero manifests
+            if (_bossActive != _bossMusicOn && _bgm != null && _bgmBoss != null)
+            {
+                _bossMusicOn = _bossActive;
+                _musicTween?.Kill();
+                _musicTween = CreateTween().SetParallel();
+                _musicTween.TweenProperty(_bgm, "volume_db", _bossMusicOn ? -80f : -9f, 1.4f);
+                _musicTween.TweenProperty(_bgmBoss, "volume_db", _bossMusicOn ? -8f : -80f, 1.4f);
+            }
 
             // AI tasks completing
             if (_pendingDecision is { IsCompleted: true })
