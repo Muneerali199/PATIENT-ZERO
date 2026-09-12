@@ -19,6 +19,7 @@ namespace PatientZero
         public Vector2 Vel;
         public float Hp, MaxHp, Speed, Damage, Radius;
         public float AttackCd, Flash, SpawnT = 0.55f;
+        public float CastCd;
         public bool Dead;
 
         public static Enemy Create(EnemyType t, Vector2 pos)
@@ -35,6 +36,14 @@ namespace PatientZero
                 Radius = cfg.radius,
             };
         }
+    }
+
+    public class EnemyBolt
+    {
+        public Vector2 Pos;
+        public Vector2 Vel;
+        public float Life = 2.4f;
+        public bool Dead;
     }
 
     public class Projectile

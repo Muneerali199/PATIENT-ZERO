@@ -38,6 +38,69 @@ namespace PatientZero
         private readonly List<(float at, EnemyType type, Vector2 pos)> _spawnQueue = new();
         private int _nextEnemyId = 1;
 
+        // ---------- enemy water bolts ----------
+        private readonly List<EnemyBolt> _bolts = new();
+        private readonly Dictionary<EnemyBolt, Node3D> _boltNodes = new();
+
+        private void CastWaterBolt(Enemy e)
+        {
+            var p = _player;
+            var dir = (p.Pos - e.Pos).Normalized();
+            var bolt = new EnemyBolt { Pos = e.Pos + dir * 1.2f, Vel = dir * 11f };
+            _bolts.Add(bolt);
+
+            var mat = new StandardMaterial3D
+            {
+                ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+                AlbedoColor = new Color(0.25f, 0.85f, 1f),
+                EmissionEnabled = true,
+                Emission = new Color(0.25f, 0.85f, 1f),
+                EmissionEnergyMultiplier = 4f,
+            };
+            var node = new Node3D();
+            var ball = new MeshInstance3D { Mesh = new SphereMesh { Radius = 0.24f, Height = 0.48f }, MaterialOverride = mat };
+            node.AddChild(ball);
+            var light = new OmniLight3D { LightColor = new Color(0.3f, 0.85f, 1f), LightEnergy = 1.6f, OmniRange = 5f };
+            node.AddChild(light);
+            var trail = new CpuParticles3D
+            {
+                Emitting = true,
+                Amount = 24,
+                Lifetime = 0.45f,
+                LocalCoords = false,
+                Direction = new Vector3(0, 0, 0),
+                Spread = 12f,
+                InitialVelocityMin = 0.2f,
+                InitialVelocityMax = 0.8f,
+                Gravity = new Vector3(0, 0.5f, 0),
+                ScaleAmountMin = 0.05f,
+                ScaleAmountMax = 0.16f,
+                Color = new Color(0.4f, 0.9f, 1f, 0.85f),
+                Mesh = new SphereMesh { Radius = 0.08f, Height = 0.16f },
+            };
+            node.AddChild(trail);
+            node.Position = new Vector3(bolt.Pos.X, 1.1f, bolt.Pos.Y);
+            _fxRoot.AddChild(node);
+            _boltNodes[bolt] = node;
+            PlaySfx("waterbolt");
+        }
+
+        private void KillBolt(EnemyBolt b, bool splash = true)
+        {
+            if (b.Dead) return;
+            b.Dead = true;
+            if (splash)
+            {
+                SpawnBurst(new Vector3(b.Pos.X, 0.7f, b.Pos.Y), new Color(0.3f, 0.85f, 1f), 16, 5f);
+                PlaySfx("splash");
+            }
+            if (_boltNodes.TryGetValue(b, out var node))
+            {
+                _boltNodes.Remove(b);
+                node.QueueFree();
+            }
+        }
+
         // ---------- AI ----------
         private Task<AIDecision>? _pendingDecision;
         private AIDecision? _decision;
@@ -142,7 +205,7 @@ namespace PatientZero
                 _bgmBoss = new AudioStreamPlayer { Stream = boss, VolumeDb = -80f };
                 AddChild(_bgmBoss);
             }
-            foreach (var n in new[] { "shoot", "hit", "melee", "purge", "hurt", "wave", "over", "taunt", "boss" })
+            foreach (var n in new[] { "shoot", "hit", "melee", "purge", "hurt", "wave", "over", "taunt", "boss", "waterbolt", "splash" })
             {
                 var s = GD.Load<AudioStream>($"res://assets/audio/{n}.wav");
                 if (s != null) _sfx[n] = s;
@@ -809,6 +872,8 @@ namespace PatientZero
             foreach (var kv in _enemyNodes) kv.Value.QueueFree();
             _enemyNodes.Clear(); _enemyAnims.Clear(); _enemyRigs.Clear();
             _enemies.Clear(); _projectiles.Clear(); _particles.Clear(); _spawnQueue.Clear();
+            foreach (var kv in _boltNodes) kv.Value.QueueFree();
+            _boltNodes.Clear(); _bolts.Clear();
             foreach (var b in _bulletNodes) b.node.QueueFree();
             _bulletNodes.Clear();
             _player.Pos = new Vector2(0, 6);
@@ -1109,6 +1174,9 @@ namespace PatientZero
                     if (e.Hp <= 0) KillEnemy(e, "ranged");
                 }
             }
+            foreach (var b in _bolts)
+                if (!b.Dead && b.Pos.DistanceTo(p.Pos) <= Config.PurgeRadius)
+                    KillBolt(b);
         }
 
         private void DamagePlayer(float dmg)
@@ -1492,6 +1560,7 @@ namespace PatientZero
                     var to = p.Pos - e.Pos;
                     float dist = to.Length();
                     var dirV = dist > 0.001f ? to / dist : Vector2.Zero;
+                    if (e.Type == EnemyType.Boss && dist < 10f) dirV *= 0.15f; // boss holds ground to cast
                     var steer = dirV;
                     foreach (var o in _enemies)
                     {
@@ -1517,7 +1586,17 @@ namespace PatientZero
                     {
                         e.AttackCd = Config.EnemyAttackCd;
                         DamagePlayer(e.Damage);
-                        if (_enemyAnims.TryGetValue(e.Id, out var ap)) PlayAnim(ap, "Melee_Attack", 1.4f);
+                        if (_enemyAnims.TryGetValue(e.Id, out var ap)) PlayAnim(ap, "attack", 1.4f);
+                    }
+
+                    // crazy water attack — boss + tanky cast bolts from range
+                    float castRange = e.Type == EnemyType.Boss ? 13f : e.Type == EnemyType.Tanky ? 8f : 0f;
+                    e.CastCd -= dt;
+                    if (castRange > 0 && e.CastCd <= 0 && dist < castRange && dist > 2.3f)
+                    {
+                        e.CastCd = e.Type == EnemyType.Boss ? 3.2f : 5.5f;
+                        CastWaterBolt(e);
+                        if (_enemyAnims.TryGetValue(e.Id, out var apc)) PlayAnim(apc, "attack", 1.2f);
                     }
                 }
 
@@ -1548,6 +1627,25 @@ namespace PatientZero
                         }
                     }
                 }
+
+                // enemy water bolts
+                foreach (var b in _bolts)
+                {
+                    if (b.Dead) continue;
+                    b.Pos += b.Vel * dt;
+                    b.Life -= dt;
+                    if (b.Life <= 0) { KillBolt(b); continue; }
+                    bool blocked = false;
+                    foreach (var pil in Config.Pillars)
+                        if (b.Pos.DistanceTo(pil.Pos) < pil.R) { blocked = true; break; }
+                    if (blocked) { KillBolt(b); continue; }
+                    if (b.Pos.DistanceTo(p.Pos) < Config.PlayerRadius + 0.45f)
+                    {
+                        DamagePlayer(16f);
+                        KillBolt(b);
+                    }
+                }
+                _bolts.RemoveAll(b => b.Dead);
 
                 _enemies.RemoveAll(e => e.Dead);
                 _projectiles.RemoveAll(b => b.Dead);
@@ -1615,7 +1713,7 @@ namespace PatientZero
                 }
                 node.Position = new Vector3(e.Pos.X, rise + bob, e.Pos.Y);
                 // rigged models: real walk cycle driven by bone poses
-                if (e.SpawnT <= 0 && _enemyRigs.TryGetValue(e.Id, out var rig) && rig != null)
+                if (e.SpawnT <= 0 && !hasAnim && _enemyRigs.TryGetValue(e.Id, out var rig) && rig != null)
                 {
                     float speedK = Mathf.Clamp(e.Vel.Length() / Mathf.Max(0.01f, e.Speed), 0f, 1f);
                     float cadence = e.Type == EnemyType.Fast ? 10.5f : e.Type == EnemyType.Boss ? 4.5f : 6.5f;
@@ -1636,6 +1734,11 @@ namespace PatientZero
                     PlayAnim(apE, "Walk", e.Type == EnemyType.Fast ? 1.5f : 1f);
                 }
             }
+
+            // water bolts
+            foreach (var kv in _boltNodes)
+                if (!kv.Key.Dead)
+                    kv.Value.Position = new Vector3(kv.Key.Pos.X, 1.1f + Mathf.Sin(_time * 6f) * 0.08f, kv.Key.Pos.Y);
 
             // bullets
             for (int i = _bulletNodes.Count - 1; i >= 0; i--)
