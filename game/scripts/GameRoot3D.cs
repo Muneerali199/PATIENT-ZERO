@@ -54,6 +54,7 @@ namespace PatientZero
         private Node3D _playerNode = null!;
         private Node3D? _rifle;
         private AnimationPlayer? _playerAnim;
+        private RigData? _playerRig;
         private OmniLight3D _muzzleLight = null!;
         private MeshInstance3D _purgeRing = null!;
         private float _purgeRingT = -1f;
@@ -69,14 +70,15 @@ namespace PatientZero
         private bool _mouseLookActive;
         private readonly Dictionary<int, Node3D> _enemyNodes = new();
         private readonly Dictionary<int, AnimationPlayer?> _enemyAnims = new();
+        private readonly Dictionary<int, RigData?> _enemyRigs = new();
         private readonly List<(MeshInstance3D node, Projectile sim)> _bulletNodes = new();
 
         private static readonly Dictionary<EnemyType, string> ModelPaths = new()
         {
-            { EnemyType.Standard, "res://assets/custom/patient_zero.glb" },
-            { EnemyType.Fast, "res://assets/custom/patient_zero.glb" },
-            { EnemyType.Tanky, "res://assets/custom/patient_zero.glb" },
-            { EnemyType.Boss, "res://assets/custom/patient_zero.glb" },
+            { EnemyType.Standard, "res://assets/custom/patient_zero_grunt.glb" },
+            { EnemyType.Fast, "res://assets/custom/patient_zero_grunt.glb" },
+            { EnemyType.Tanky, "res://assets/custom/patient_zero_grunt.glb" },
+            { EnemyType.Boss, "res://assets/custom/patient_zero_rigged.glb" },
         };
         private static readonly Dictionary<EnemyType, float> ModelScale = new()
         {
@@ -435,13 +437,51 @@ namespace PatientZero
 
         private static PackedScene? LoadCharacter(string builtinPath, string customName)
         {
-            string custom = $"res://assets/custom/{customName}.glb";
-            if (ResourceLoader.Exists(custom))
+            // rigged variant wins > plain custom > builtin
+            foreach (var path in new[]
             {
-                var s = LoadScene(custom);
-                if (s != null) return s;
+                $"res://assets/custom/{customName}_rigged.glb",
+                $"res://assets/custom/{customName}.glb",
+            })
+            {
+                if (ResourceLoader.Exists(path))
+                {
+                    var s = LoadScene(path);
+                    if (s != null) return s;
+                }
             }
             return LoadScene(builtinPath);
+        }
+
+        // ---- runtime skeleton puppetry (walk cycles for auto-rigged models) ----
+        private class RigData
+        {
+            public Skeleton3D Skel = null!;
+            public int ThighL = -1, ThighR = -1, ShinL = -1, ShinR = -1, ArmL = -1, ArmR = -1, Spine = -1;
+        }
+
+        private static RigData? FindRig(Node root)
+        {
+            var skel = root.FindChildren("*", "Skeleton3D", true, false).OfType<Skeleton3D>().FirstOrDefault();
+            if (skel == null) return null;
+            var r = new RigData { Skel = skel };
+            r.ThighL = skel.FindBone("thigh_l"); r.ThighR = skel.FindBone("thigh_r");
+            r.ShinL = skel.FindBone("shin_l"); r.ShinR = skel.FindBone("shin_r");
+            r.ArmL = skel.FindBone("upperarm_l"); r.ArmR = skel.FindBone("upperarm_r");
+            r.Spine = skel.FindBone("spine");
+            return r.ThighL >= 0 ? r : null;
+        }
+
+        private static void PoseWalk(RigData r, float phase, float amount)
+        {
+            float swing = Mathf.Sin(phase) * amount;
+            if (r.ThighL >= 0) r.Skel.SetBonePoseRotation(r.ThighL, new Quaternion(Vector3.Right, swing));
+            if (r.ThighR >= 0) r.Skel.SetBonePoseRotation(r.ThighR, new Quaternion(Vector3.Right, -swing));
+            if (r.ShinL >= 0) r.Skel.SetBonePoseRotation(r.ShinL, new Quaternion(Vector3.Right, Mathf.Max(0, -swing) * 0.9f));
+            if (r.ShinR >= 0) r.Skel.SetBonePoseRotation(r.ShinR, new Quaternion(Vector3.Right, Mathf.Max(0, swing) * 0.9f));
+            if (r.ArmL >= 0) r.Skel.SetBonePoseRotation(r.ArmL, new Quaternion(Vector3.Right, -swing * 0.55f));
+            if (r.ArmR >= 0) r.Skel.SetBonePoseRotation(r.ArmR, new Quaternion(Vector3.Right, swing * 0.55f));
+            if (r.Spine >= 0) r.Skel.SetBonePoseRotation(r.Spine, new Quaternion(Vector3.Forward, Mathf.Sin(phase * 2f) * 0.06f * amount));
         }
 
         private static Aabb ComputeModelAabb(Node node, Transform3D accum, ref bool first, ref Aabb box)
@@ -506,6 +546,7 @@ namespace PatientZero
             {
                 _playerNode = NormalizeModel(scene.Instantiate<Node3D>(), 1.8f);
                 _playerAnim = FindAnim(_playerNode);
+                _playerRig = FindRig(_playerNode);
 
                 // weapon in the hero's right hand — custom/weapon.glb wins, else built-in energy rifle
                 var customWeapon = LoadScene("res://assets/custom/weapon.glb");
@@ -766,7 +807,7 @@ namespace PatientZero
             _time = 0; _wave = 0; _score = 0; _kills = 0;
             _history.Clear();
             foreach (var kv in _enemyNodes) kv.Value.QueueFree();
-            _enemyNodes.Clear(); _enemyAnims.Clear();
+            _enemyNodes.Clear(); _enemyAnims.Clear(); _enemyRigs.Clear();
             _enemies.Clear(); _projectiles.Clear(); _particles.Clear(); _spawnQueue.Clear();
             foreach (var b in _bulletNodes) b.node.QueueFree();
             _bulletNodes.Clear();
@@ -905,6 +946,7 @@ namespace PatientZero
             _enemyRoot.AddChild(node);
             _enemyNodes[e.Id] = node;
             _enemyAnims[e.Id] = ap;
+            _enemyRigs[e.Id] = FindRig(node);
         }
 
         private static void TintModel(Node root, Color tint, float amount)
@@ -943,6 +985,7 @@ namespace PatientZero
                 _enemyNodes.Remove(e.Id);
                 AnimationPlayer? ap = _enemyAnims.GetValueOrDefault(e.Id);
                 _enemyAnims.Remove(e.Id);
+                _enemyRigs.Remove(e.Id);
                 SpawnBurst(node.Position, Config.EnemyTint(_theme, e.Type), e.Type == EnemyType.Boss ? 60 : 26, e.Type == EnemyType.Boss ? 9f : 6f);
                 if (e.Type == EnemyType.Boss)
                 {
@@ -1541,6 +1584,11 @@ namespace PatientZero
             {
                 float pbob = _player.Vel.LengthSquared() > 0.1f ? Mathf.Abs(Mathf.Sin(_time * 8f)) * 0.05f : 0f;
                 _playerNode.Position = new Vector3(_player.Pos.X, pbob, _player.Pos.Y);
+                if (_playerRig != null)
+                {
+                    float speedK = Mathf.Clamp(_player.Vel.Length() / Config.PlayerSpeed, 0f, 1f);
+                    PoseWalk(_playerRig, _time * 9.5f, 0.12f + 0.45f * speedK);
+                }
                 if (_player.Aim.LengthSquared() > 0.001f)
                 {
                     float yaw = Mathf.Atan2(_player.Aim.X, _player.Aim.Y);
@@ -1566,6 +1614,13 @@ namespace PatientZero
                     roll = Mathf.Sin(_time * 2.4f + e.Id) * 0.07f; // shamble sway
                 }
                 node.Position = new Vector3(e.Pos.X, rise + bob, e.Pos.Y);
+                // rigged models: real walk cycle driven by bone poses
+                if (e.SpawnT <= 0 && _enemyRigs.TryGetValue(e.Id, out var rig) && rig != null)
+                {
+                    float speedK = Mathf.Clamp(e.Vel.Length() / Mathf.Max(0.01f, e.Speed), 0f, 1f);
+                    float cadence = e.Type == EnemyType.Fast ? 10.5f : e.Type == EnemyType.Boss ? 4.5f : 6.5f;
+                    PoseWalk(rig, _time * cadence + e.Id * 1.3f, (0.15f + 0.5f * speedK) * (e.Type == EnemyType.Boss ? 0.8f : 1f));
+                }
                 float baseScale = ModelScale.GetValueOrDefault(e.Type, 1f);
                 float s = e.SpawnT > 0 ? baseScale * Mathf.Max(0.05f, 1f - e.SpawnT / 0.55f) : baseScale;
                 if (e.Flash > 0.3f) s *= 1.12f;
