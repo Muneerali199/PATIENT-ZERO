@@ -51,6 +51,7 @@ namespace PatientZero
         public Vector2 Pos;
         public Vector2 Vel;
         public float Life = Config.BulletLife;
+        public float Damage = Config.BulletDmg;
         public bool Dead;
     }
 

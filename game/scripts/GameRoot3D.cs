@@ -162,6 +162,16 @@ namespace PatientZero
         private Button _camBtn = null!;
         private Button _fireBtn = null!;
         private bool _fireHeld;
+
+        // ---------- weapons ----------
+        private int _weaponIdx = 1;
+        private readonly int[] _ammo = { 10, 30, 6 };
+        private bool _reloading;
+        private readonly List<Node3D?> _weaponNodes = new();
+        private readonly List<Button> _weaponBtns = new();
+        private Label _ammoLabel = null!;
+        private bool _autoFire;
+        private Tween? _kickTween;
         private Control _tauntPanel = null!;
         private ColorRect _hpFill = null!;
         private Button _purgeBtn = null!;
@@ -205,7 +215,7 @@ namespace PatientZero
                 _bgmBoss = new AudioStreamPlayer { Stream = boss, VolumeDb = -80f };
                 AddChild(_bgmBoss);
             }
-            foreach (var n in new[] { "shoot", "hit", "melee", "purge", "hurt", "wave", "over", "taunt", "boss", "waterbolt", "splash" })
+            foreach (var n in new[] { "shoot", "hit", "melee", "purge", "hurt", "wave", "over", "taunt", "boss", "waterbolt", "splash", "pistol", "shotgun", "reload", "switch" })
             {
                 var s = GD.Load<AudioStream>($"res://assets/audio/{n}.wav");
                 if (s != null) _sfx[n] = s;
@@ -263,6 +273,7 @@ namespace PatientZero
             _theme = Config.Themes[_bucket];
             _seedLabel = $"SEED: {_theme.Label}";
 
+            _autoFire = _screenshotMode;
             _profile = SpecimenProfile.Load();
             BuildWorld();
             BuildArena();
@@ -494,6 +505,65 @@ namespace PatientZero
             catch { return null; }
         }
 
+        // ---- weapon system ----
+        private void SwitchWeapon(int i)
+        {
+            if (i == _weaponIdx || _reloading || i < 0 || i >= Config.Weapons.Length) return;
+            var oldN = _weaponNodes.Count > _weaponIdx ? _weaponNodes[_weaponIdx] : null;
+            var newN = _weaponNodes.Count > i ? _weaponNodes[i] : null;
+            _weaponIdx = i;
+            PlaySfx("switch");
+            SpawnBurst(new Vector3(_player.Pos.X, 1.2f, _player.Pos.Y), Config.Weapons[i].BulletColor, 14, 4f);
+            if (oldN != null)
+            {
+                var t = CreateTween();
+                t.TweenProperty(oldN, "rotation_degrees", new Vector3(-85, 40, 30), 0.16f);
+                t.Parallel().TweenProperty(oldN, "scale", Vector3.One * 0.01f, 0.16f);
+                t.TweenCallback(Callable.From(() => { if (IsInstanceValid(oldN)) { oldN.Visible = false; oldN.RotationDegrees = Vector3.Zero; oldN.Scale = Vector3.One; } }));
+            }
+            if (newN != null)
+            {
+                newN.Visible = true;
+                newN.Scale = Vector3.One * 0.01f;
+                newN.RotationDegrees = new Vector3(-90, -540, 30);
+                var t2 = CreateTween().SetTrans(Tween.TransitionType.Back).SetEase(Tween.EaseType.Out);
+                t2.TweenProperty(newN, "scale", Vector3.One, 0.38f);
+                t2.Parallel().TweenProperty(newN, "rotation_degrees", Vector3.Zero, 0.38f);
+            }
+            UpdateWeaponHud();
+        }
+
+        private void StartReload()
+        {
+            if (_reloading) return;
+            var w = Config.Weapons[_weaponIdx];
+            if (_ammo[_weaponIdx] >= w.Mag) return;
+            _reloading = true;
+            PlaySfx("reload");
+            var n = _weaponNodes.Count > _weaponIdx ? _weaponNodes[_weaponIdx] : null;
+            if (n != null)
+            {
+                var t = CreateTween();
+                t.TweenProperty(n, "rotation_degrees", new Vector3(-42, 0, 14), 0.22f);
+                t.TweenProperty(n, "rotation_degrees", Vector3.Zero, 0.32f).SetDelay(Mathf.Max(0.05f, w.ReloadTime - 0.32f));
+            }
+            UpdateWeaponHud();
+            GetTree().CreateTimer(w.ReloadTime).Timeout += () =>
+            {
+                _ammo[_weaponIdx] = w.Mag;
+                _reloading = false;
+                UpdateWeaponHud();
+            };
+        }
+
+        private void UpdateWeaponHud()
+        {
+            for (int i = 0; i < _weaponBtns.Count; i++)
+                _weaponBtns[i].Modulate = i == _weaponIdx ? new Color(1f, 1f, 1f) : new Color(0.5f, 0.5f, 0.5f);
+            var w = Config.Weapons[_weaponIdx];
+            _ammoLabel.Text = _reloading ? "RELOADING…" : $"{_ammo[_weaponIdx]} / {w.Mag}";
+        }
+
         // ---- Custom character override: drop YOUR .glb into res://assets/custom/ ----
         private static readonly string[] CustomNames =
             { "player", "zombie_standard", "zombie_runner", "zombie_brute" };
@@ -611,22 +681,27 @@ namespace PatientZero
                 _playerAnim = FindAnim(_playerNode);
                 _playerRig = FindRig(_playerNode);
 
-                // weapon in the hero's right hand — custom/weapon.glb wins, else built-in energy rifle
+                // weapon slots — custom/weapon.glb overrides ALL slots if present
                 var customWeapon = LoadScene("res://assets/custom/weapon.glb");
-                Node3D? weaponNode = null;
-                if (customWeapon != null)
-                    weaponNode = NormalizeLength(customWeapon.Instantiate<Node3D>(), 0.95f);
-                else
+                for (int i = 0; i < Config.Weapons.Length; i++)
                 {
-                    var rifleScene = LoadScene("res://assets/models/rifle.glb");
-                    if (rifleScene != null) weaponNode = rifleScene.Instantiate<Node3D>();
+                    Node3D? wn = null;
+                    if (customWeapon != null)
+                        wn = NormalizeLength(customWeapon.Instantiate<Node3D>(), 0.95f);
+                    else
+                    {
+                        var ws = LoadScene(Config.Weapons[i].Model);
+                        if (ws != null) wn = ws.Instantiate<Node3D>();
+                    }
+                    if (wn != null)
+                    {
+                        wn.Position = new Vector3(0.28f, 1.0f, 0.22f);
+                        wn.Visible = i == _weaponIdx;
+                        _playerNode.AddChild(wn);
+                    }
+                    _weaponNodes.Add(wn);
                 }
-                if (weaponNode != null)
-                {
-                    weaponNode.Position = new Vector3(0.28f, 1.0f, 0.22f);
-                    _playerNode.AddChild(weaponNode);
-                    _rifle = weaponNode;
-                }
+                _rifle = _weaponNodes.Count > _weaponIdx ? _weaponNodes[_weaponIdx] : null;
             }
             else
             {
@@ -751,6 +826,22 @@ namespace PatientZero
             _fireBtn.ButtonDown += () => _fireHeld = true;
             _fireBtn.ButtonUp += () => _fireHeld = false;
             _ui.AddChild(_fireBtn);
+
+            // weapon switcher (top-center-left) + ammo counter
+            var wbar = new HBoxContainer { Position = new Vector2(24, 68) };
+            wbar.AddThemeConstantOverride("separation", 8);
+            string[] shortNames = { "1 · PISTOL", "2 · AR", "3 · SCATTER" };
+            for (int i = 0; i < 3; i++)
+            {
+                var b = new Button { Text = shortNames[i], CustomMinimumSize = new Vector2(118, 40) };
+                b.AddThemeFontSizeOverride("font_size", 13);
+                int idx = i;
+                b.Pressed += () => SwitchWeapon(idx);
+                _weaponBtns.Add(b);
+                wbar.AddChild(b);
+            }
+            _ui.AddChild(wbar);
+            _ammoLabel = MkLabel(UIR(), "30 / 30", new Vector2(1030, 84), new Vector2(226, 30), 22, TermGreen, HorizontalAlignment.Right);
 
             // Camera mode button
             var camBtn = new Button { Text = "CAM: TOP [C]", Position = new Vector2(24, 596), Size = new Vector2(180, 60) };
@@ -883,6 +974,11 @@ namespace PatientZero
             ApplyCamVisuals();
             if (_bgm != null && !_bgm.Playing) _bgm.Play();
             if (_bgmBoss != null && !_bgmBoss.Playing) _bgmBoss.Play();
+            _weaponIdx = 1;
+            for (int i = 0; i < _ammo.Length && i < Config.Weapons.Length; i++) _ammo[i] = Config.Weapons[i].Mag;
+            _reloading = false;
+            for (int i = 0; i < _weaponNodes.Count; i++) if (_weaponNodes[i] != null) _weaponNodes[i]!.Visible = i == _weaponIdx;
+            UpdateWeaponHud();
             _mouseLookActive = false;
             StartWave(1, Config.Wave1Bias(_bucket), ZoneName.Balanced);
         }
@@ -1102,33 +1198,55 @@ namespace PatientZero
         private void FireBullet()
         {
             var p = _player;
+            var w = Config.Weapons[_weaponIdx];
             var dir = p.Aim.Normalized();
-            var proj = new Projectile
+            for (int i = 0; i < w.Pellets; i++)
             {
-                Pos = p.Pos + dir * 0.9f,
-                Vel = dir * Config.BulletSpeed,
-            };
-            _projectiles.Add(proj);
-
-            var mat = new StandardMaterial3D
+                var d = dir;
+                if (w.Spread > 0)
+                {
+                    float ang = ((float)GD.Randf() - 0.5f) * 2f * w.Spread;
+                    d = new Vector2(
+                        dir.X * Mathf.Cos(ang) - dir.Y * Mathf.Sin(ang),
+                        dir.X * Mathf.Sin(ang) + dir.Y * Mathf.Cos(ang));
+                }
+                var proj = new Projectile
+                {
+                    Pos = p.Pos + d * 0.9f,
+                    Vel = d * w.Speed,
+                    Damage = w.Damage,
+                };
+                _projectiles.Add(proj);
+                var mat = new StandardMaterial3D
+                {
+                    ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+                    AlbedoColor = w.BulletColor,
+                    EmissionEnabled = true,
+                    Emission = w.BulletColor,
+                    EmissionEnergyMultiplier = 3.2f,
+                };
+                var node = new MeshInstance3D
+                {
+                    Mesh = new SphereMesh { Radius = w.Pellets > 1 ? 0.09f : 0.11f, Height = 0.22f },
+                    MaterialOverride = mat,
+                    Position = new Vector3(proj.Pos.X, 0.95f, proj.Pos.Y),
+                };
+                _fxRoot.AddChild(node);
+                _bulletNodes.Add((node, proj));
+            }
+            PlaySfx(w.Sound);
+            _muzzleLight.LightEnergy = 2.4f;
+            _muzzleLight.LightColor = w.BulletColor;
+            _muzzleLight.Position = new Vector3(p.Pos.X + dir.X * 0.8f, 1.1f, p.Pos.Y + dir.Y * 0.8f);
+            // gun kick
+            var wn = _weaponNodes.Count > _weaponIdx ? _weaponNodes[_weaponIdx] : null;
+            if (wn != null)
             {
-                ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
-                AlbedoColor = new Color("#d9ffe6"),
-                EmissionEnabled = true,
-                Emission = new Color("#9ef0b3"),
-                EmissionEnergyMultiplier = 3.2f,
-            };
-            var node = new MeshInstance3D
-            {
-                Mesh = new SphereMesh { Radius = 0.11f, Height = 0.22f },
-                MaterialOverride = mat,
-                Position = new Vector3(proj.Pos.X, 0.9f, proj.Pos.Y),
-            };
-            _fxRoot.AddChild(node);
-            _bulletNodes.Add((node, proj));
-            PlaySfx("shoot");
-            _muzzleLight.LightEnergy = 2.2f;
-            _muzzleLight.Position = new Vector3(p.Pos.X + p.Aim.X * 0.8f, 1.35f, p.Pos.Y + p.Aim.Y * 0.8f);
+                wn.Position = new Vector3(0.28f, 1.0f, 0.13f);
+                _kickTween?.Kill();
+                _kickTween = CreateTween();
+                _kickTween.TweenProperty(wn, "position", new Vector3(0.28f, 1.0f, 0.22f), 0.09f);
+            }
         }
 
         private void TryMelee()
@@ -1318,6 +1436,13 @@ namespace PatientZero
                     GetTree().ReloadCurrentScene();
                 if (kb.PhysicalKeycode == Key.C) CycleCamMode();
                 if (kb.PhysicalKeycode == Key.Escape) Input.MouseMode = Input.MouseModeEnum.Visible;
+                if (_phase == Phase.Playing)
+                {
+                    if (kb.PhysicalKeycode == Key.Key1) SwitchWeapon(0);
+                    if (kb.PhysicalKeycode == Key.Key2) SwitchWeapon(1);
+                    if (kb.PhysicalKeycode == Key.Key3) SwitchWeapon(2);
+                    if (kb.PhysicalKeycode == Key.R) StartReload();
+                }
             }
         }
 
@@ -1371,7 +1496,7 @@ namespace PatientZero
                     }
                 }
                 var aim = new Vector2(-Mathf.Sin(_yaw), -Mathf.Cos(_yaw));
-                bool firing = _mouseDown || aimTouch || _fireHeld || (auto && best != null);
+                bool firing = _mouseDown || aimTouch || _fireHeld || (auto && best != null && _autoFire) || Input.IsPhysicalKeyPressed(Key.F);
                 return (aim, firing);
             }
 
@@ -1395,7 +1520,7 @@ namespace PatientZero
                 float d = p.Pos.DistanceTo(e.Pos);
                 if (d < bdT) { bdT = d; bestT = e; }
             }
-            if (bestT != null) return ((bestT.Pos - p.Pos).Normalized(), true);
+            if (bestT != null) return ((bestT.Pos - p.Pos).Normalized(), _autoFire || Input.IsPhysicalKeyPressed(Key.F));
             return (p.Aim, false);
         }
 
@@ -1527,17 +1652,19 @@ namespace PatientZero
                 p.FireCd -= dt;
                 if (firing && p.FireCd <= 0)
                 {
-                    FireBullet();
-                    p.FireCd = Config.FireCooldown;
-                    PlayAnim(_playerAnim, "1H_Ranged_Shoot", 2f);
+                    if (_ammo[_weaponIdx] <= 0 && !_reloading) StartReload();
+                    if (!_reloading && _ammo[_weaponIdx] > 0)
+                    {
+                        _ammo[_weaponIdx]--;
+                        FireBullet();
+                        p.FireCd = Config.Weapons[_weaponIdx].FireCd;
+                        UpdateWeaponHud();
+                    }
                 }
-                else if (mv.LengthSquared() > 0.01f)
+                if (_playerAnim != null)
                 {
-                    PlayAnim(_playerAnim, "Walk", 1.1f);
-                }
-                else if (_playerAnim != null && _playerAnim.CurrentAnimation.ToString().Contains("Shoot"))
-                {
-                    PlayAnim(_playerAnim, "Idle", 1f);
+                    if (mv.LengthSquared() > 0.01f) PlayAnim(_playerAnim, "Walk", 1.1f);
+                    else PlayAnim(_playerAnim, "Idle", 1f);
                 }
 
                 p.MeleeCd -= dt;
@@ -1617,7 +1744,7 @@ namespace PatientZero
                         if (e.Dead || e.SpawnT > 0) continue;
                         if (b.Pos.DistanceTo(e.Pos) < e.Radius + 0.18f)
                         {
-                            e.Hp -= Config.BulletDmg;
+                            e.Hp -= b.Damage;
                             e.Flash = 1;
                             b.Dead = true;
                             if (_enemyNodes.TryGetValue(e.Id, out var hitNode))
@@ -1682,7 +1809,7 @@ namespace PatientZero
             {
                 float pbob = _player.Vel.LengthSquared() > 0.1f ? Mathf.Abs(Mathf.Sin(_time * 8f)) * 0.05f : 0f;
                 _playerNode.Position = new Vector3(_player.Pos.X, pbob, _player.Pos.Y);
-                if (_playerRig != null)
+                if (_playerRig != null && _playerAnim == null)
                 {
                     float speedK = Mathf.Clamp(_player.Vel.Length() / Config.PlayerSpeed, 0f, 1f);
                     PoseWalk(_playerRig, _time * 9.5f, 0.12f + 0.45f * speedK);

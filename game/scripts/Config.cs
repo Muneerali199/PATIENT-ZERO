@@ -142,6 +142,29 @@ namespace PatientZero
             _ => t.EnemyStandard,
         };
 
+        // ---------- weapons ----------
+        public class WeaponDef
+        {
+            public string Name = "";
+            public string Sound = "shoot";
+            public int Mag;
+            public float Damage;
+            public float FireCd;
+            public float ReloadTime;
+            public float Speed;
+            public Color BulletColor;
+            public int Pellets = 1;
+            public float Spread;
+            public string Model = "";
+        }
+
+        public static readonly WeaponDef[] Weapons =
+        {
+            new WeaponDef { Name = "PULSE PISTOL", Sound = "pistol", Mag = 10, Damage = 55, FireCd = 0.30f, ReloadTime = 1.1f, Speed = 17f, BulletColor = new Color(1f, 0.7f, 0.3f), Pellets = 1, Model = "res://assets/models/pistol.glb" },
+            new WeaponDef { Name = "REAPER'S BANE", Sound = "shoot", Mag = 30, Damage = 32, FireCd = 0.13f, ReloadTime = 1.6f, Speed = 20f, BulletColor = new Color(0.62f, 0.94f, 0.7f), Pellets = 1, Model = "res://assets/models/rifle.glb" },
+            new WeaponDef { Name = "VOID SCATTERGUN", Sound = "shotgun", Mag = 6, Damage = 18, FireCd = 0.72f, ReloadTime = 2.0f, Speed = 15f, BulletColor = new Color(0.4f, 0.85f, 1f), Pellets = 5, Spread = 0.13f, Model = "res://assets/models/scattergun.glb" },
+        };
+
         // AI
         public const string GeminiModel = "gemini-2.0-flash";
         public const string GeminiUrl =
