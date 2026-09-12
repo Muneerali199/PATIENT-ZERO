@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#050607" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="description" content="A zombie shooter where the villain is a live AI that profiles YOU. KICKR Codemania 2026." />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧟</text></svg>" />
+  <link rel="manifest" href="/PATIENT-ZERO/manifest.json" />
+  <title>PATIENT ZERO: PROTOCOL</title>
+  <style>
+    :root {
+      --term: #9ef0b3;
+      --term-dim: #4e8a63;
+      --term-glow: rgba(46, 255, 136, 0.25);
+      --alert: #ff4d5e;
+      --bg: #050607;
+      --panel: rgba(3, 10, 6, 0.85);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; overflow: hidden; background: var(--bg); }
+    body {
+      font-family: 'JetBrains Mono', 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
+      color: var(--term);
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    body::after {
+      content: '';
+      position: fixed; inset: 0; pointer-events: none; z-index: 90;
+      background: repeating-linear-gradient(0deg, rgba(0,0,0,0.16) 0 1px, transparent 1px 3px);
+      mix-blend-mode: multiply;
+    }
+    #c { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+
+    /* ---------- HUD ---------- */
+    .hud { position: fixed; z-index: 20; pointer-events: none; font-size: 13px; letter-spacing: 1px; }
+    #hpWrap { top: calc(10px + env(safe-area-inset-top)); left: 12px; width: 200px; }
+    #hpWrap .lbl { font-size: 10px; color: var(--term-dim); margin-bottom: 3px; }
+    #hpBar { height: 10px; border: 1px solid var(--term-dim); background: rgba(0,0,0,0.5); }
+    #hpFill { height: 100%; width: 100%; background: var(--term); transition: width 0.15s; }
+    #hpFill.low { background: var(--alert); }
+    #waveWrap { top: calc(8px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); text-align: center; }
+    #waveLabel { font-size: 22px; font-weight: 700; text-shadow: 0 0 12px var(--term-glow); }
+    #themeTag { font-size: 10px; color: var(--term-dim); margin-top: 2px; }
+    #scoreWrap { top: calc(10px + env(safe-area-inset-top)); right: 12px; text-align: right; }
+    #scoreLabel { font-size: 18px; }
+    #brainBadge { font-size: 9px; color: var(--term-dim); border: 1px solid var(--term-dim); padding: 2px 6px; display: inline-block; margin-top: 4px; }
+
+    /* ---------- Taunt ---------- */
+    #taunt {
+      position: fixed; z-index: 30; bottom: 120px; left: 50%; transform: translateX(-50%);
+      width: min(620px, 88vw); border: 1px solid rgba(46,255,136,0.35); background: var(--panel);
+      padding: 12px 16px; opacity: 0; transition: opacity 0.25s; pointer-events: none;
+      box-shadow: 0 0 24px rgba(46,255,136,0.12), inset 0 0 30px rgba(0,0,0,0.5);
+    }
+    #taunt.show { opacity: 1; }
+    #taunt .who { font-size: 9px; color: var(--alert); letter-spacing: 3px; margin-bottom: 6px; }
+    #tauntText { font-size: 15px; line-height: 1.5; min-height: 22px; }
+    #tauntText::after { content: '▌'; animation: blink 0.9s infinite; color: var(--term-dim); }
+    #taunt.done #tauntText::after { content: ''; }
+    #reasoning { font-size: 10px; color: var(--term-dim); margin-top: 8px; line-height: 1.5; }
+    @keyframes blink { 50% { opacity: 0; } }
+
+    /* ---------- Controls ---------- */
+    #specialBtn {
+      position: fixed; z-index: 25; right: 26px; bottom: 30px; width: 76px; height: 76px;
+      border-radius: 50%; border: 1px solid var(--term-dim); background: rgba(3,10,6,0.6);
+      color: var(--term); font-family: inherit; font-size: 10px; letter-spacing: 1px;
+      display: none; touch-action: none;
+    }
+    #specialBtn:disabled { opacity: 0.35; }
+    #muteBtn {
+      position: fixed; z-index: 25; right: 12px; bottom: 120px; width: 34px; height: 34px;
+      border-radius: 50%; border: 1px solid rgba(78,138,99,0.4); background: rgba(3,10,6,0.6);
+      color: var(--term-dim); font-size: 13px; display: none; touch-action: none;
+    }
+
+    /* ---------- Screens ---------- */
+    .screen {
+      position: fixed; inset: 0; z-index: 50; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; text-align: center; gap: 14px;
+      background: radial-gradient(ellipse at center, rgba(5,10,7,0.88) 0%, rgba(3,4,5,0.97) 75%);
+      padding: 20px;
+    }
+    .screen.hidden { display: none; }
+    .title { font-size: clamp(26px, 6vw, 46px); font-weight: 800; letter-spacing: 6px;
+      text-shadow: 0 0 18px var(--term-glow); animation: flicker 3.2s infinite; }
+    .title .z { color: var(--alert); text-shadow: 0 0 18px rgba(255,77,94,0.4); }
+    @keyframes flicker { 0%,93%,96%,100% { opacity: 1; } 94%,95% { opacity: 0.55; } }
+    .sub { font-size: 11px; color: var(--term-dim); letter-spacing: 3px; }
+    .seed { font-size: 12px; letter-spacing: 2px; }
+    .greet { max-width: 520px; font-size: 14px; line-height: 1.6; color: var(--term); min-height: 44px; }
+    .btn {
+      pointer-events: auto; margin-top: 10px; background: transparent; color: var(--term);
+      border: 1px solid var(--term); padding: 14px 34px; font-family: inherit; font-size: 14px;
+      letter-spacing: 4px; cursor: pointer; transition: all 0.15s;
+    }
+    .btn:hover, .btn:active { background: var(--term); color: #04120a; box-shadow: 0 0 22px var(--term-glow); }
+    .hint { font-size: 9px; color: var(--term-dim); letter-spacing: 2px; line-height: 1.8; }
+
+    /* ---------- Autopsy card ---------- */
+    #reportCard {
+      border: 1px solid rgba(255,77,94,0.45); background: var(--panel);
+      width: min(560px, 92vw); padding: 18px 20px; text-align: left;
+      box-shadow: 0 0 30px rgba(255,77,94,0.12);
+    }
+    #reportCard .rhead { color: var(--alert); letter-spacing: 5px; font-size: 13px; border-bottom: 1px dashed rgba(255,77,94,0.3); padding-bottom: 8px; margin-bottom: 10px; display: flex; justify-content: space-between; }
+    #reportCard .rrow { display: flex; justify-content: space-between; gap: 14px; font-size: 12px; padding: 3px 0; }
+    #reportCard .rrow .k { color: var(--term-dim); letter-spacing: 1px; }
+    #reportCard .rrow .v { text-align: right; }
+    #adaptBar { width: 130px; height: 8px; border: 1px solid var(--term-dim); display: inline-block; vertical-align: middle; margin-left: 8px; }
+    #adaptFill { height: 100%; background: var(--term); width: 0%; transition: width 1.2s; }
+    #rRemark { margin-top: 12px; padding-top: 10px; border-top: 1px dashed rgba(158,240,179,0.25); font-size: 13px; line-height: 1.6; font-style: italic; }
+    #rSource { font-size: 9px; color: var(--term-dim); margin-top: 10px; letter-spacing: 2px; }
+    .btnrow { display: flex; gap: 12px; }
+  </style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+
+  <div class="hud" id="hpWrap">
+    <div class="lbl">SPECIMEN VITALS</div>
+    <div id="hpBar"><div id="hpFill"></div></div>
+  </div>
+  <div class="hud" id="waveWrap">
+    <div id="waveLabel">WAVE 01</div>
+    <div id="themeTag">—</div>
+  </div>
+  <div class="hud" id="scoreWrap">
+    <div id="scoreLabel">0</div>
+    <div><span id="brainBadge">PZ-CORE // LOCAL</span></div>
+  </div>
+
+  <div id="taunt">
+    <div class="who">▚ PATIENT ZERO // TRANSMISSION</div>
+    <div id="tauntText"></div>
+    <div id="reasoning"></div>
+  </div>
+
+  <button id="specialBtn">PURGE<br><span id="cdText">RDY</span></button>
+  <button id="muteBtn">♪</button>
+
+  <div class="screen" id="startScreen">
+    <div class="title">PATIENT <span class="z">ZERO</span></div>
+    <div class="sub">P R O T O C O L</div>
+    <div class="seed" id="startSpec">SPECIMEN #001</div>
+    <div class="greet" id="startGreet"></div>
+    <div class="seed" id="startSeed"></div>
+    <div class="hint" id="startBest"></div>
+    <button class="btn" id="startBtn">BEGIN EXPOSURE</button>
+    <div class="hint">LEFT THUMB — MOVE &nbsp;·&nbsp; RIGHT THUMB — AIM + FIRE<br>DESKTOP — WASD + MOUSE &nbsp;·&nbsp; SPACE — PURGE<br>IT STUDIES YOU. IT REMEMBERS YOU. IT REPORTS YOU.</div>
+  </div>
+
+  <div class="screen hidden" id="overScreen">
+    <div class="title" style="font-size:clamp(20px,4vw,30px)">SPECIMEN <span class="z">TERMINATED</span></div>
+    <div id="reportCard">
+      <div class="rhead"><span>▚ AUTOPSY REPORT</span><span id="rRun">RUN 01</span></div>
+      <div class="rrow"><span class="k">SPECIMEN</span><span class="v" id="rSpec">#001</span></div>
+      <div class="rrow"><span class="k">WAVES SURVIVED</span><span class="v" id="rWave">0</span></div>
+      <div class="rrow"><span class="k">KILLS / SCORE</span><span class="v" id="rKills">0 / 0</span></div>
+      <div class="rrow"><span class="k">ARCHETYPE</span><span class="v" id="rArchetype">—</span></div>
+      <div class="rrow"><span class="k">ADAPTABILITY</span><span class="v"><span id="rAdaptPct">0.00</span><span id="adaptBar"><span id="adaptFill" style="display:block"></span></span></span></div>
+      <div class="rrow"><span class="k">CAUSE OF DEATH</span><span class="v" id="rCause">—</span></div>
+      <div class="rrow"><span class="k">WEAKNESS</span><span class="v" id="rWeak">—</span></div>
+      <div id="rRemark"></div>
+      <div id="rSource"></div>
+    </div>
+    <div class="btnrow">
+      <button class="btn" id="shareBtn">SHARE REPORT</button>
+      <button class="btn" id="restartBtn">RUN AGAIN</button>
+    </div>
+    <div class="hint">IT REMEMBERS YOU NEXT TIME.</div>
+  </div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

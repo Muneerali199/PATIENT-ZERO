@@ -1,0 +1,25 @@
+config_version=5
+
+[application]
+
+config/name="PATIENT ZERO: PROTOCOL"
+config/description="A wave-survival shooter where the villain is a live AI that profiles YOU."
+config/features=PackedStringArray("4.4", "C#", "Mobile")
+run/main_scene="res://scenes/Main.tscn"
+
+[dotnet]
+
+project/assembly_name="PatientZero"
+
+[display]
+
+window/size/viewport_width=1280
+window/size/viewport_height=720
+window/handheld/orientation=2
+window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
+
+[rendering]
+
+renderer/rendering_method="mobile"
+environment/defaults/default_clear_color=Color(0.027, 0.035, 0.027, 1)
