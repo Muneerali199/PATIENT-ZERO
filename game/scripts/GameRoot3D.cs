@@ -289,7 +289,7 @@ namespace PatientZero
         }
 
         // ---------- UI polish + virtual joysticks ----------
-        private TextureRect _joyBaseL = null!, _joyKnobL = null!, _joyBaseR = null!, _joyKnobR = null!;
+        private TextureRect _joyBaseL = null!, _joyKnobL = null!;
         private TextureRect? _menuRing;
         private Label? _titleGlow;
         private ColorRect? _menuAccent;
@@ -470,7 +470,7 @@ namespace PatientZero
         }
 
         // input
-        private readonly Dictionary<long, (Vector2 origin, Vector2 cur, bool aim)> _touches = new();
+        private readonly Dictionary<long, (Vector2 origin, Vector2 cur)> _touches = new();
         private bool _mouseDown;
         private Vector2 _mousePos;
 
@@ -865,7 +865,7 @@ namespace PatientZero
             catch { return null; }
         }
 
-        private static void SetJoy(TextureRect baseR, TextureRect knob, (Vector2 o, Vector2 c, bool active) s, float k)
+        private static void SetJoy(TextureRect baseR, TextureRect knob, (Vector2 o, Vector2 c, bool active) s)
         {
             if (!s.active)
             {
@@ -874,10 +874,10 @@ namespace PatientZero
                 return;
             }
             baseR.Visible = true; knob.Visible = true;
-            baseR.Position = s.o * k - baseR.Size / 2;
-            var d = (s.c - s.o) * k;
+            baseR.Position = s.o - baseR.Size / 2;
+            var d = s.c - s.o;
             if (d.Length() > 46f) d = d.Normalized() * 46f;
-            knob.Position = s.o * k - knob.Size / 2 + d * 0.55f;
+            knob.Position = s.o - knob.Size / 2 + d * 0.55f;
         }
 
         private void UpdateTacticHint()
@@ -1616,18 +1616,14 @@ namespace PatientZero
             _discTex = MakeDiscTex(64, new Color(0.62f, 0.94f, 0.7f, 0.9f));
             _joyBaseL = new TextureRect { Texture = _ringTex, Size = new Vector2(140, 140), Visible = _mobileControls, MouseFilter = Control.MouseFilterEnum.Ignore };
             _joyKnobL = new TextureRect { Texture = _discTex, Size = new Vector2(64, 64), Visible = _mobileControls, MouseFilter = Control.MouseFilterEnum.Ignore };
-            _joyBaseR = new TextureRect { Texture = _ringTex, Size = new Vector2(140, 140), Visible = _mobileControls, MouseFilter = Control.MouseFilterEnum.Ignore };
-            _joyKnobR = new TextureRect { Texture = _discTex, Size = new Vector2(64, 64), Visible = _mobileControls, MouseFilter = Control.MouseFilterEnum.Ignore };
-            foreach (var control in new Control[] { _joyBaseL, _joyKnobL, _joyBaseR, _joyKnobR })
+            foreach (var control in new Control[] { _joyBaseL, _joyKnobL })
                 control.ZIndex = 50;
             if (_mobileControls)
             {
                 _joyBaseL.Position = new Vector2(98, 548);
                 _joyKnobL.Position = _joyBaseL.Position + new Vector2(38, 38);
-                _joyBaseR.Position = new Vector2(856, 548);
-                _joyKnobR.Position = _joyBaseR.Position + new Vector2(38, 38);
             }
-            _ui.AddChild(_joyBaseL); _ui.AddChild(_joyKnobL); _ui.AddChild(_joyBaseR); _ui.AddChild(_joyKnobR);
+            _ui.AddChild(_joyBaseL); _ui.AddChild(_joyKnobL);
 
             // Camera mode button
             var camBtn = new Button { Text = "CAM: TOP [C]", Position = new Vector2(24, 596), Size = new Vector2(180, 60) };
@@ -2637,31 +2633,21 @@ namespace PatientZero
 
             if (e is InputEventScreenTouch touch)
             {
+                var vp = GetViewport().GetVisibleRect().Size;
+                var uiPos = touch.Position * new Vector2(1280f / vp.X, 720f / vp.Y);
                 if (touch.Pressed)
                 {
-                    var vp = GetViewport().GetVisibleRect().Size;
-                    var scale = vp / new Vector2(1280, 720);
-                    var stickCenter = new Vector2(168, 618) * scale;
                     // Mobile has one movement stick on the left. The FIRE button
                     // owns the right side, so right-side touches never become aim sticks.
-                    if (touch.Position.X <= vp.X * 0.5f)
-                        _touches[touch.Index] = (stickCenter, touch.Position, false);
+                    if (uiPos.X <= 460f && uiPos.Y >= 430f)
+                        _touches[touch.Index] = (new Vector2(168, 618), uiPos);
                 }
                 else _touches.Remove(touch.Index);
             }
             else if (e is InputEventScreenDrag drag)
             {
                 if (_touches.TryGetValue(drag.Index, out var t))
-                {
-                    if (t.aim && _camMode != CamMode.Top)
-                    {
-                        var rel = drag.Position - t.cur;
-                        _yaw -= rel.X * 0.006f;
-                        _pitch = Mathf.Clamp(_pitch - rel.Y * 0.005f, -0.9f, 0.6f);
-                        _mouseLookActive = true;
-                    }
-                    _touches[drag.Index] = (t.origin, drag.Position, t.aim);
-                }
+                    _touches[drag.Index] = (t.origin, drag.Position * new Vector2(1280f / GetViewport().GetVisibleRect().Size.X, 720f / GetViewport().GetVisibleRect().Size.Y));
             }
             else if (e is InputEventMouseButton mb && mb.ButtonIndex == MouseButton.Left)
             {
@@ -2711,7 +2697,6 @@ namespace PatientZero
             if (Input.IsPhysicalKeyPressed(Key.S) || Input.IsPhysicalKeyPressed(Key.Down)) y += 1;
             foreach (var t in _touches.Values)
             {
-                if (t.aim) continue;
                 var d = (t.cur - t.origin) / 90f;
                 if (d.Length() > 0.15f) { x += d.X; y += d.Y; }
             }
@@ -2732,10 +2717,7 @@ namespace PatientZero
 
             if (_camMode != CamMode.Top)
             {
-                bool aimTouch = false;
-                foreach (var t in _touches.Values) if (t.aim) aimTouch = true;
-
-                bool auto = !_mouseLookActive && !aimTouch && !_fireHeld;
+                bool auto = !_mouseLookActive && !_fireHeld;
                 Enemy? best = null; float bd = float.MaxValue;
                 if (auto || _fireHeld)
                 {
@@ -2752,17 +2734,10 @@ namespace PatientZero
                     }
                 }
                 var aim = new Vector2(-Mathf.Sin(_yaw), -Mathf.Cos(_yaw));
-                bool firing = _mouseDown || aimTouch || _fireHeld || (auto && best != null && _autoFire) || Input.IsPhysicalKeyPressed(Key.F);
+                bool firing = _mouseDown || _fireHeld || (auto && best != null && _autoFire) || Input.IsPhysicalKeyPressed(Key.F);
                 return (aim, firing);
             }
 
-            foreach (var t in _touches.Values)
-            {
-                if (!t.aim) continue;
-                var w = ScreenToGround(t.cur);
-                var d = w - p.Pos;
-                if (d.Length() > 0.2f) return (d.Normalized(), true);
-            }
             if (_mobileControls && _fireHeld)
                 return (p.Aim, true);
             if (_mouseDown)
@@ -2849,18 +2824,16 @@ namespace PatientZero
                 if (_mobileControls)
                 {
                     _joyBaseL.Visible = _joyKnobL.Visible = true;
-                    _joyBaseR.Visible = _joyKnobR.Visible = false;
                     _fireBtn.Visible = true;
                 }
                 (Vector2 o, Vector2 c, bool active) moveS = (Vector2.Zero, Vector2.Zero, false);
                 foreach (var tv in _touches.Values)
-                    if (!tv.aim) moveS = (tv.origin, tv.cur, true);
-                float k = 1280f / GetViewport().GetVisibleRect().Size.X;
-                SetJoy(_joyBaseL, _joyKnobL, moveS, k);
+                    moveS = (tv.origin, tv.cur, true);
+                SetJoy(_joyBaseL, _joyKnobL, moveS);
             }
             else if (_joyBaseL != null && _joyBaseL.Visible)
             {
-                _joyBaseL.Visible = _joyKnobL.Visible = _joyBaseR.Visible = _joyKnobR.Visible = false;
+                _joyBaseL.Visible = _joyKnobL.Visible = false;
             }
 
             // jungle atmosphere: fog breathing + drifting fog + fireflies
