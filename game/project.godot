@@ -23,3 +23,4 @@ window/stretch/aspect="expand"
 
 renderer/rendering_method="mobile"
 environment/defaults/default_clear_color=Color(0.027, 0.035, 0.027, 1)
+textures/vram_compression/import_etc2_astc=true

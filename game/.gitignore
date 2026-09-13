@@ -1,4 +1,5 @@
 .godot/
 .mono/
 .export/
+export/
 godot.log
